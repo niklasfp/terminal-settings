@@ -106,6 +106,22 @@ never touches your real config.
 
 ### Releasing
 
-Each app is released on its own, and the release tag is the version: create a GitHub release
-tagged `rio-settings/v1.2.3` or `ghostty-settings/v1.2.3`. The release workflow builds that app
-with Native AOT for each platform and attaches the executables, archives and `SHA256SUMS`.
+Each app is released on its own, and the tag is the version. To release, push a tag:
+
+```sh
+git tag rio-settings/v1.2.3 && git push origin rio-settings/v1.2.3
+```
+
+The release workflow then:
+1. builds that app with Native AOT for each platform,
+2. creates the GitHub release as a draft with the executables, archives and `SHA256SUMS`
+   attached,
+3. publishes it.
+
+The repo has immutable releases on, so a published release can't be changed. To fix a release,
+push a new version.
+
+- **Release notes:** `release-notes/<app>/<version>.md` if it exists, else the annotated tag's
+  message, else GitHub's generated notes.
+- **Pre-releases:** a suffix such as `1.2.3-alpha.1` marks the release as a pre-release.
+- **Dry run:** run the workflow by hand with a tag to build everything without releasing.
