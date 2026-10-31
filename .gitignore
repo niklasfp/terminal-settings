@@ -1,0 +1,8 @@
+.DS_Store
+# Separate, unrelated work kept alongside; not part of this repo.
+termbench/
+termbench-xfer/
+# Throwaway spikes from the design phase.
+spikes/
+# Local agent worktrees
+.claude/

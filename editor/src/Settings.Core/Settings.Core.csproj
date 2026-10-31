@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Settings.Core</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Compile-time request delegates for the minimal API routes (AOT-safe, no reflection). -->
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared UI runtime, embedded so each app stays a single binary. -->
+    <EmbeddedResource Include="wwwroot/**" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RioSettings.Tests" />
+    <InternalsVisibleTo Include="GhosttySettings.Tests" />
+  </ItemGroup>
+
+</Project>

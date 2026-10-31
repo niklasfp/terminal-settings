@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>rio-settings</AssemblyName>
+    <RootNamespace>RioSettings</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <!-- Schema drift findings from the generator stay warnings: the UI still renders the setting. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);RIO001;RIO003;RIO004;RIO008</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Tomlyn" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Schema inputs consumed by the source generator. -->
+    <AdditionalFiles Include="../../schema/rio/rio-source.json" />
+    <AdditionalFiles Include="../../schema/rio/rio-overlay.json" />
+    <!-- Theme catalogue served to the theme picker. -->
+    <EmbeddedResource Include="../../schema/rio/rio-themes.json" LogicalName="rio-themes.json" />
+    <EmbeddedResource Include="../../brand/rio-logo.svg" LogicalName="logo" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Settings.Core/Settings.Core.csproj" />
+    <ProjectReference Include="../Settings.Generators/Settings.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RioSettings.Tests" />
+  </ItemGroup>
+
+</Project>

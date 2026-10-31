@@ -1,0 +1,11 @@
+bin/
+obj/
+out/
+artifacts/
+tools/*/schema-dump/target/
+.DS_Store
+*.user
+.vs/
+.idea/
+TestResults/
+out-*/

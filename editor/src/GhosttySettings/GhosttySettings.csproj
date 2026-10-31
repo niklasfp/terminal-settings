@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ghostty-settings</AssemblyName>
+    <RootNamespace>GhosttySettings</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <!-- Schema drift findings from the generator stay warnings: the UI still renders the setting. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);GHO001;GHO003;GHO004</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Schema inputs consumed by the source generator. -->
+    <AdditionalFiles Include="../../schema/ghostty/ghostty-source.json" />
+    <AdditionalFiles Include="../../schema/ghostty/ghostty-overlay.json" />
+    <EmbeddedResource Include="../../brand/ghostty-logo.png" LogicalName="logo" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Settings.Core/Settings.Core.csproj" />
+    <ProjectReference Include="../Settings.Generators/Settings.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="GhosttySettings.Tests" />
+  </ItemGroup>
+
+</Project>

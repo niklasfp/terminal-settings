@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Settings.Core/Settings.Core.csproj" />
+    <Project Path="src/Settings.Generators/Settings.Generators.csproj" />
+    <Project Path="src/RioSettings/RioSettings.csproj" />
+    <Project Path="src/GhosttySettings/GhosttySettings.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RioSettings.Tests/RioSettings.Tests.csproj" />
+    <Project Path="tests/GhosttySettings.Tests/GhosttySettings.Tests.csproj" />
+  </Folder>
+</Solution>

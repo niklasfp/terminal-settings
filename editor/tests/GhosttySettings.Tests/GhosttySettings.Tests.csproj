@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Settings.Core/Settings.Core.csproj" />
+    <ProjectReference Include="../../src/GhosttySettings/GhosttySettings.csproj" />
+    <ProjectReference Include="../../src/Settings.Generators/Settings.Generators.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../schema/ghostty/*.json" LinkBase="schema" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

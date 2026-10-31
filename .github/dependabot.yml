@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: /editor
+    schedule:
+      interval: weekly
+    ignore:
+      # Source generators must not reference a Roslyn newer than the oldest supported SDK's compiler
+      # (see Directory.Packages.props): only take patch fixes automatically, bump on purpose otherwise.
+      - dependency-name: "Microsoft.CodeAnalysis.*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+    groups:
+      # Majors stay out of every group, so each one gets its own PR.
+      test:
+        patterns:
+          - "TUnit*"
+          - "Microsoft.Testing.*"
+        update-types: [minor, patch]
+      roslyn:
+        patterns:
+          - "Microsoft.CodeAnalysis.*"
+        update-types: [minor, patch]
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: /editor/tools/rio/schema-dump
+    schedule:
+      interval: weekly
+    ignore:
+      # Bumping rio-backend means regenerating the schema on purpose, not via a bot PR.
+      - dependency-name: rio-backend
+    groups:
+      serde-and-toml:
+        patterns:
+          - "serde*"
+          - "toml*"

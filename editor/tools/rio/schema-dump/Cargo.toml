@@ -1,0 +1,11 @@
+[package]
+name = "schema-dump"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Lean mode: no renderer/window deps, just config loading.
+rio-backend = { git = "https://github.com/raphamorim/rio", default-features = false }
+serde_json = "1"
+toml = "0.9"
