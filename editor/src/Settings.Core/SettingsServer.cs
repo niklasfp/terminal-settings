@@ -51,7 +51,8 @@ public static class SettingsServer
             await next();
         });
 
-        app.MapGet("/", () => Results.Content(def.Html, "text/html; charset=utf-8"));
+        var html = def.Html.Replace("<!--app-version-->", VersionHtml(def.Name));
+        app.MapGet("/", () => Results.Content(html, "text/html; charset=utf-8"));
         app.MapGet("/app.css", () => Asset("app.css", "text/css; charset=utf-8"));
         app.MapGet("/app.js", () => Asset("app.js", "text/javascript; charset=utf-8"));
         app.MapGet("/logo", () => def.Logo?.Invoke() is { } logo ? Results.Stream(logo, def.LogoContentType) : Results.NotFound());
@@ -166,10 +167,40 @@ public static class SettingsServer
         return 0;
     }
 
-    /// <summary>The app's informational version (set from the release tag at publish time).</summary>
-    static string Version() =>
-        (System.Reflection.Assembly.GetEntryAssembly()?.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "dev").Split('+')[0];
+    const string RepoUrl = "https://github.com/niklasfp/terminal-settings";
+
+    /// <summary>
+    /// The version (set from the release tag at publish time) and the git commit it was built from.
+    /// The SDK appends the commit to the informational version as "+sha".
+    /// </summary>
+    static (string Version, string? Commit) BuildInfo()
+    {
+        var info = System.Reflection.Assembly.GetEntryAssembly()?
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "dev";
+        var plus = info.IndexOf('+');
+        if (plus < 0) return (info, null);
+        var commit = info[(plus + 1)..];
+        var isSha = commit.Length >= 7 && commit.All(Uri.IsHexDigit);
+        return (info[..plus], isSha ? commit : null);
+    }
+
+    static string Version()
+    {
+        var (version, commit) = BuildInfo();
+        return commit is null ? version : $"{version} ({commit[..7]})";
+    }
+
+    static string VersionHtml(string name)
+    {
+        var (version, commit) = BuildInfo();
+        static string e(string s) => System.Net.WebUtility.HtmlEncode(s);
+        var text = $"{e(name)} {e(version)}";
+        var html = $"<p class=\"rev\" title=\"{text}\">{text}</p>";
+        return commit is null
+            ? html
+            : $"{html}\n  <p class=\"rev\">Commit <a href=\"{RepoUrl}/commit/{commit}\" target=\"_blank\" rel=\"noopener\" title=\"{commit}\"><code>{commit[..7]}</code></a></p>";
+    }
 
     static JsonArray Strings(IEnumerable<string> items) => new([.. items.Select(s => (JsonNode?)s)]);
 

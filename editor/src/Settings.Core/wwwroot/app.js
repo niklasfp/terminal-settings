@@ -871,7 +871,7 @@
     $("#empty-search").hidden = any;
     // Keep the sidebar in step: hide sections without hits and show hit counts while searching.
     const searching = terms.length > 0;
-    for (const a of $$(".sidebar a")) {
+    for (const a of $$(".sidebar a[data-group]")) {
       const group = document.getElementById("g-" + a.dataset.group);
       const hits = group && !group.hidden ? $$(".setting", group).filter((r) => !r.hidden).length : 0;
       a.parentElement.hidden = searching && hits === 0;
@@ -882,7 +882,7 @@
   });
 
   // ---------- navigation ----------
-  const links = new Map($$(".sidebar a").map((a) => [a.dataset.group, a]));
+  const links = new Map($$(".sidebar a[data-group]").map((a) => [a.dataset.group, a]));
   const observer = new IntersectionObserver((entries) => {
     for (const e of entries) {
       if (!e.isIntersecting) continue;

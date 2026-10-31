@@ -106,6 +106,8 @@ internal static class HtmlEmitter
               .Append(Icon(g.Icon)).Append("<span class=\"name\">").Append(H(g.Title)).Append("</span><span class=\"badge-count\" data-modified-count=\"").Append(g.Id).Append("\"></span></a></li>\n");
         }
         sb.Append("  </ul>\n");
+        // The app version is only known at run time; the server replaces this marker.
+        sb.Append("  <!--app-version-->\n");
         sb.Append("  <p class=\"rev\">Schema from ").Append(H(schema.Terminal)).Append(" <code>").Append(H(Short(schema.Revision))).Append("</code></p>\n");
         sb.Append("</nav>\n");
 
