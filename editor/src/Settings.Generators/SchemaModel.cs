@@ -39,7 +39,7 @@ internal sealed class SettingDef
     public List<string> Tags = new();
     /// <summary>For repeatable keys whose built-in defaults are too long to list.</summary>
     public string? BuiltInsNote;
-    /// <summary>Native dialog for path fields: "image", "audio", "file" or "folder".</summary>
+    /// <summary>File picker for path fields: "image", "audio", "file" or "folder".</summary>
     public string? Pick;
     /// <summary>Short free-text values (durations, "10%", "2,4"): rendered as a compact field.</summary>
     public bool Compact;

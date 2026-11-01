@@ -945,24 +945,18 @@
   }
   $$("[data-font-picker]").forEach(fontPicker);
   $$("[data-theme-picker]").forEach((i) => suggestPicker(i, themeSource));
-  // "Choose…" buttons: the server opens the native dialog and returns the real path.
+  // "Choose…" buttons open the page's own file picker, which browses the disk through the server.
   for (const btn of $$('[data-role="browse"]')) {
     btn.addEventListener("click", async () => {
       const row = btn.closest(".setting");
       const target = $('[data-role="value"], [data-role="chip-input"]', row);
-      btn.disabled = true;
-      try {
-        const r = await api("/api/choose", { kind: btn.dataset.pick, prompt: "Choose " + S[row.dataset.key].l.toLowerCase() });
-        if (r.path) {
-          target.value = r.path;
-          target.dispatchEvent(new Event("input"));
-          target.dispatchEvent(new Event("valuepick"));
-        }
-      } catch (err) {
-        toast(err.message);
-      } finally {
-        btn.disabled = false;
+      const path = await filePicker.open(btn.dataset.pick, "Choose " + S[row.dataset.key].l.toLowerCase(), target.value);
+      if (path) {
+        target.value = path;
+        target.dispatchEvent(new Event("input"));
+        target.dispatchEvent(new Event("valuepick"));
       }
+      btn.focus();
     });
   }
   $("#save").addEventListener("click", startSave);
@@ -977,8 +971,199 @@
     fetch("/api/bye", { method: "POST", keepalive: true, headers: { "X-Settings-Token": token } }).catch(() => {});
   });
 
+  // ---------- file picker ----------
+  // Browsers never reveal real paths, so this lists folders through /api/files and returns full paths.
+  const filePicker = (() => {
+    const icons = {
+      dir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>',
+      file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>',
+      up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+    };
+    const dialog = document.createElement("dialog");
+    dialog.className = "files";
+    dialog.setAttribute("aria-labelledby", "fb-title");
+    dialog.innerHTML = `
+      <form method="dialog">
+        <h2 class="fb-title" id="fb-title"></h2>
+        <div class="fb-bar">
+          <button type="button" class="btn small fb-up" title="Up one folder" aria-label="Up one folder">${icons.up}</button>
+          <input class="text mono fb-path" spellcheck="false" autocomplete="off" aria-label="Folder">
+        </div>
+        <div class="fb-body">
+          <nav class="fb-places" aria-label="Places"></nav>
+          <div class="fb-list" role="listbox" tabindex="0" aria-label="Files"></div>
+        </div>
+        <div class="fb-foot">
+          <label class="fb-hidden"><input type="checkbox"> Show hidden</label>
+          <span class="fb-sel"></span>
+          <button value="cancel" class="btn">Cancel</button>
+          <button value="ok" class="btn primary fb-ok">Choose</button>
+        </div>
+      </form>`;
+    document.body.append(dialog);
+    const [title, up, pathInput, places, list, hiddenBox, selLabel, ok] =
+      [".fb-title", ".fb-up", ".fb-path", ".fb-places", ".fb-list", ".fb-hidden input", ".fb-sel", ".fb-ok"].map((s) => $(s, dialog));
+    const lastDir = new Map(); // kind → folder, for this page's lifetime
+    let kind = "file", cur = null, sel = -1, resolve = null, typed = "", typedAt = 0, seq = 0;
+
+    const baseName = (p) => (p || "").split(/[\\/]/).pop();
+    const join = (name) => (cur.path.endsWith(cur.sep) ? cur.path : cur.path + cur.sep) + name;
+    const items = () => $$(".fb-item", list);
+
+    function message(text) {
+      const p = document.createElement("p");
+      p.className = "fb-empty";
+      p.textContent = text;
+      list.append(p);
+    }
+
+    function select(i, scroll = true) {
+      const all = items();
+      sel = all.length && i >= 0 ? Math.min(i, all.length - 1) : -1;
+      all.forEach((el, j) => {
+        el.classList.toggle("sel", j === sel);
+        el.setAttribute("aria-selected", String(j === sel));
+      });
+      if (sel >= 0) list.setAttribute("aria-activedescendant", all[sel].id);
+      else list.removeAttribute("aria-activedescendant");
+      if (sel >= 0 && scroll) all[sel].scrollIntoView({ block: "nearest" });
+      const e = sel >= 0 ? cur.entries[sel] : null;
+      if (kind === "folder") {
+        ok.disabled = !cur;
+        selLabel.textContent = !cur ? "" : e?.d ? e.n : "This folder";
+      } else {
+        ok.disabled = !e || e.d;
+        selLabel.textContent = e && !e.d ? e.n : "";
+      }
+    }
+
+    function reset() {
+      cur = null;
+      list.replaceChildren();
+      places.replaceChildren();
+      pathInput.value = "";
+      up.disabled = true;
+      select(-1);
+    }
+
+    async function load(path, pick) {
+      const mine = ++seq;
+      let r;
+      try {
+        r = await api("/api/files", { path, kind, hidden: hiddenBox.checked });
+      } catch (err) {
+        if (mine !== seq) return;
+        reset();
+        message(err.message);
+        return;
+      }
+      if (mine !== seq || !dialog.open) return; // a newer load (or a closed dialog) wins
+      cur = r;
+      lastDir.set(kind, r.path);
+      pathInput.value = r.path;
+      pathInput.scrollLeft = pathInput.scrollWidth; // show the end of long paths
+      up.disabled = !r.parent;
+      places.replaceChildren(...r.places.map((p) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = p.name;
+        b.title = p.path;
+        b.classList.toggle("active", p.path === r.path);
+        b.addEventListener("click", () => load(p.path));
+        return b;
+      }));
+      list.replaceChildren(...r.entries.map((e, i) => {
+        const div = document.createElement("div");
+        div.className = "fb-item" + (e.d ? " dir" : "");
+        div.id = "fb-i" + i;
+        div.setAttribute("role", "option");
+        div.setAttribute("aria-selected", "false");
+        if (e.d) div.setAttribute("aria-label", e.n + ", folder");
+        div.innerHTML = e.d ? icons.dir : icons.file;
+        div.append(Object.assign(document.createElement("span"), { textContent: e.n }));
+        div.addEventListener("click", () => { select(i, false); list.focus(); });
+        div.addEventListener("dblclick", () => activate(i));
+        return div;
+      }));
+      if (r.error) message(r.error);
+      else if (r.truncated) message("Too many items to list them all. Type a path above to go straight to it.");
+      else if (!r.entries.length) message(kind === "folder" ? "No folders here." : "No matching files here.");
+      list.scrollTop = 0;
+      // Prefer an exact match; fall back to ignoring case (macOS and Windows file names usually do).
+      let at = pick ? r.entries.findIndex((e) => e.n === pick) : -1;
+      if (pick && at < 0) at = r.entries.findIndex((e) => e.n.toLowerCase() === pick.toLowerCase());
+      select(at);
+    }
+
+    function activate(i) {
+      const e = cur?.entries[i];
+      if (!e) return;
+      if (e.d) load(join(e.n));
+      else finish(join(e.n));
+    }
+
+    function finish(path) {
+      resolve?.(path);
+      resolve = null;
+      dialog.close("done");
+    }
+
+    up.addEventListener("click", () => cur?.parent && load(cur.parent));
+    hiddenBox.addEventListener("change", () => cur && load(cur.path));
+    pathInput.addEventListener("keydown", (e) => {
+      // A typed file path opens its folder with the file selected.
+      if (e.key === "Enter") { e.preventDefault(); load(pathInput.value, baseName(pathInput.value.trim())); }
+    });
+    list.addEventListener("keydown", (e) => {
+      if (!cur) return;
+      const n = items().length;
+      if (e.key === "Backspace" || (e.altKey && e.key === "ArrowUp")) { e.preventDefault(); if (cur.parent) load(cur.parent); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); select(sel < 0 ? 0 : sel + 1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); select(sel < 0 ? n - 1 : sel - 1); }
+      else if (e.key === "Home") { e.preventDefault(); select(0); }
+      else if (e.key === "End") { e.preventDefault(); select(n - 1); }
+      else if (e.key === "Enter") { e.preventDefault(); if (sel >= 0) activate(sel); }
+      else if (e.key === " ") { e.preventDefault(); if (sel < 0) select(0); }
+      else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // Type to jump to the first name that starts with what was typed.
+        typed = (Date.now() - typedAt < 700 ? typed : "") + e.key.toLowerCase();
+        typedAt = Date.now();
+        const i = cur.entries.findIndex((x) => x.n.toLowerCase().startsWith(typed));
+        if (i >= 0) select(i);
+      }
+    });
+    dialog.addEventListener("close", () => {
+      seq++; // drop any load still in flight
+      if (!resolve) return;
+      const e = sel >= 0 ? cur?.entries[sel] : null;
+      // "Choose" picks the selected file; for folders, the selected folder or else the open one.
+      const picked = dialog.returnValue !== "ok" || !cur ? null
+        : kind === "folder" ? (e?.d ? join(e.n) : cur.path)
+        : e && !e.d ? join(e.n) : null;
+      resolve(picked);
+      resolve = null;
+    });
+
+    return {
+      async open(k, heading, current) {
+        kind = k;
+        title.textContent = heading;
+        ok.textContent = k === "folder" ? "Choose folder" : "Choose";
+        reset();
+        const done = new Promise((r) => { resolve = r; });
+        dialog.returnValue = "";
+        dialog.showModal();
+        list.focus();
+        const start = current?.trim() || "";
+        await load(start || lastDir.get(k) || "", baseName(start));
+        return done;
+      },
+    };
+  })();
+
   // ---------- toast ----------
   let toastTimer;
+
   function toast(text) {
     const el = $("#toast");
     el.textContent = text;

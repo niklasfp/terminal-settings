@@ -84,8 +84,9 @@ Each skips itself when its tool isn't available.
 
 Platform-specific pieces live in `Settings.Core`:
 - **Fonts:** CoreText on macOS, `fc-list` on Linux, the registry font list on Windows.
-- **File dialogs:** AppleScript on macOS, zenity/kdialog on Linux, a WinForms dialog with a
-  topmost owner on Windows (otherwise it opens behind the browser).
+- **File picker:** "Choose…" opens the page's own picker, which lists folders through the
+  server (`/api/files`). Browsers never reveal real paths, and native dialogs started by a
+  background process open behind the browser on Windows, so there are no OS dialogs.
 - **Line endings:** saves keep the file's existing endings, so CRLF files stay CRLF.
 
 **Testing on Windows from a Mac.** Native AOT can't cross-compile, so build a self-contained
