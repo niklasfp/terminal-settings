@@ -129,7 +129,6 @@ The editor doesn't touch that file.
 - **A change doesn't show up**: some settings only apply to new windows or after a restart.
   They're marked with a badge.
 - **Font list is empty on Linux**: install `fontconfig` (it provides `fc-list`).
-- **"Choose…" does nothing on Linux**: install `zenity` or `kdialog`.
 
 ## Building from source and contributing
 

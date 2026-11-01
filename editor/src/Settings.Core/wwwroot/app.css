@@ -319,6 +319,8 @@ textarea.raw { min-height: 180px; resize: vertical; font-size: 12.5px; line-heig
 }
 .btn:hover { background: var(--surface-2); }
 .btn.small { padding: 4px 10px; font-size: 13px; }
+/* "Choose…" sits next to a text field, so it takes the field's height. */
+.btn.browse { height: var(--field-h); padding: 0 12px; white-space: nowrap; flex: none; }
 .btn.primary { background: var(--accent-fill); border-color: transparent; color: var(--accent-text); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: .45; cursor: default; filter: none; }
@@ -351,6 +353,45 @@ dialog h2 { margin: 0 0 4px; font-size: 17px; }
 .diff .gap { color: var(--faint); }
 .error { color: var(--danger); font-size: 13px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+/* file picker */
+dialog.files { width: min(780px, calc(100vw - 40px)); }
+.fb-bar { display: flex; gap: 8px; margin: 14px 0 10px; }
+.fb-bar .fb-path { flex: 1; min-width: 0; }
+.fb-up { width: 34px; padding: 0; display: grid; place-items: center; }
+.fb-up svg { width: 16px; height: 16px; }
+.fb-body { display: grid; grid-template-columns: 160px 1fr; gap: 10px; height: min(50vh, 400px); }
+.fb-places { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.fb-places button {
+  display: flex; align-items: center; min-height: 32px; padding: 0 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 500; line-height: 1;
+  text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none;
+}
+.fb-places button:hover { background: var(--surface-2); }
+.fb-places button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.fb-list {
+  overflow-y: auto; padding: 4px; border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--bg); outline: none;
+}
+.fb-list:focus-visible { border-color: var(--accent); }
+.fb-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px;
+  font-size: 13px; cursor: default; user-select: none;
+}
+.fb-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fb-item svg { width: 16px; height: 16px; flex: none; color: var(--muted); }
+.fb-item.dir svg { color: var(--accent); }
+.fb-item:hover { background: var(--surface-2); }
+.fb-item.sel { background: var(--accent-fill); color: var(--accent-text); }
+.fb-item.sel svg { color: inherit; }
+.fb-empty { margin: 0; padding: 18px; color: var(--muted); font-size: 13px; text-align: center; }
+.fb-foot { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.fb-hidden { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.fb-sel { flex: 1; min-width: 0; color: var(--muted); font-size: 12.5px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 600px) {
+  .fb-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .fb-places { flex-direction: row; overflow-x: auto; }
+}
 
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0;
