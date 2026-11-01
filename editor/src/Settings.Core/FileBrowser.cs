@@ -27,9 +27,11 @@ public static class FileBrowser
         var truncated = false;
         try
         {
+            // IgnoreInaccessible stays off: with it, an unreadable folder (e.g. macOS privacy-protected
+            // Desktop/Documents) would just look empty instead of reporting the error below.
             var options = new EnumerationOptions
             {
-                IgnoreInaccessible = true,
+                IgnoreInaccessible = false,
                 RecurseSubdirectories = false,
                 AttributesToSkip = hidden ? 0 : FileAttributes.Hidden | FileAttributes.System,
             };
@@ -40,19 +42,21 @@ public static class FileBrowser
                 // Dot-names count as hidden everywhere, also on Windows where they have no Hidden attribute.
                 if (!hidden && info.Name.StartsWith('.')) continue;
                 if (!isDir && !Matches(info.Name, kind)) continue;
-                if (items.Count == MaxEntries) { truncated = true; break; }
                 items.Add((info.Name, isDir));
             }
+            // Sort before capping so a huge folder shows its first items, not an arbitrary subset.
             items.Sort((a, b) => a.IsDir != b.IsDir ? (a.IsDir ? -1 : 1) : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-            foreach (var (name, isDir) in items)
+            truncated = items.Count > MaxEntries;
+            foreach (var (name, isDir) in items.Take(MaxEntries))
             {
                 var e = new JsonObject { ["n"] = name };
                 if (isDir) e["d"] = true;
                 entries.Add((JsonNode)e);
             }
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException or ArgumentException)
         {
+            entries.Clear();
             error = "This folder can't be read.";
         }
 
@@ -69,7 +73,15 @@ public static class FileBrowser
         return result;
     }
 
-    static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    static string Home
+    {
+        get
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            // Without a profile (e.g. a service account) fall back to the current drive's root.
+            return home.Length > 0 ? home : System.IO.Path.GetPathRoot(Environment.CurrentDirectory) ?? "/";
+        }
+    }
 
     static bool Matches(string name, string kind) => kind switch
     {
@@ -104,14 +116,32 @@ public static class FileBrowser
             for (var d = new DirectoryInfo(full); d is not null; d = d.Parent)
                 if (d.Exists) return d.FullName;
         }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException or System.Security.SecurityException)
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException or System.Security.SecurityException or UnauthorizedAccessException)
         {
             // Not a usable path; fall back to the default below.
         }
         return Home;
     }
 
-    static JsonArray Places(string configDir)
+    static JsonArray? places;
+    static string? placesFor;
+    static readonly Lock PlacesLock = new();
+
+    /// <summary>Computed once per config folder; responses get a copy.</summary>
+    static JsonNode Places(string configDir)
+    {
+        lock (PlacesLock)
+        {
+            if (places is null || placesFor != configDir)
+            {
+                places = ComputePlaces(configDir);
+                placesFor = configDir;
+            }
+            return places.DeepClone();
+        }
+    }
+
+    static JsonArray ComputePlaces(string configDir)
     {
         var places = new JsonArray();
         var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -131,8 +161,8 @@ public static class FileBrowser
         if (OperatingSystem.IsWindows())
         {
             foreach (var drive in DriveInfo.GetDrives())
-                if (drive.DriveType is DriveType.Fixed or DriveType.Removable or DriveType.Network)
-                    Add(drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName);
+                if ((drive.DriveType is DriveType.Fixed or DriveType.Removable or DriveType.Network) && drive.IsReady)
+                    places.Add((JsonNode)new JsonObject { ["name"] = drive.Name.TrimEnd('\\'), ["path"] = drive.RootDirectory.FullName });
         }
         else
         {

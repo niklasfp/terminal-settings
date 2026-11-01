@@ -109,15 +109,16 @@ public static class SettingsServer
             });
         });
 
-        // Native file/folder dialog; the page can't learn real paths itself.
         // The page's own file picker lists folders through this; browsers never reveal real paths.
         app.MapPost("/api/files", async (HttpRequest req) =>
         {
             if (await ReadObject(req) is not { } body) return BadRequest("Expected a JSON object.");
-            var kind = body["kind"]?.GetValue<string>() ?? "file";
+            string? kind = "file", path = null;
+            bool hidden = false;
+            if (body["kind"] is { } k && !(k is JsonValue kv && kv.TryGetValue(out kind))) return BadRequest("Expected kind to be a string.");
+            if (body["path"] is { } p && !(p is JsonValue pv && pv.TryGetValue(out path))) return BadRequest("Expected path to be a string.");
+            if (body["hidden"] is { } h && !(h is JsonValue hv && hv.TryGetValue(out hidden))) return BadRequest("Expected hidden to be true or false.");
             if (kind is not ("image" or "audio" or "file" or "folder")) return BadRequest("Unknown kind.");
-            var path = body["path"]?.GetValue<string>();
-            var hidden = body["hidden"]?.GetValue<bool>() ?? false;
             return Json(FileBrowser.List(path, kind, hidden, options.ConfigPath));
         });
 
