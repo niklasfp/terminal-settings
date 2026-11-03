@@ -3,8 +3,9 @@
 This is the developer guide. For what the apps do and how to install them, see the
 [top-level README](../README.md).
 
-Each editor is a single Native AOT binary. It starts a loopback web server and serves a
-settings page that is generated, at build time, from the terminal's own source.
+Each editor is a native desktop application built with [GPUI Kit](https://gpui-kit.com) (Rust, on
+Zed's GPUI). Both terminals share one window implementation; each app is a thin binary with its own
+palette, icon, and config format adapter. The settings schemas come from each terminal's own source.
 
 | App | Edits | Schema comes from |
 |---|---|---|
@@ -12,43 +13,52 @@ settings page that is generated, at build time, from the terminal's own source.
 | `ghostty-settings` | Ghostty's `config.ghostty` / `config` | `ghostty +show-config --default --docs` + `src/config/Config.zig` |
 
 Both editors share the same behaviour:
-- **Search and grouping:** every option the terminal has, grouped and searchable, with its own docs.
+- **Search and grouping:** every option the terminal has, grouped into sections and searchable, with
+  its own docs and "In your config" badges.
 - **Minimal edits:** saving touches only the lines you changed, so comments and formatting stay.
   A diff preview shows exactly what will change.
-- **Light and dark:** follows the system by default, with a System / Light / Dark switch.
+- **Light and dark:** follows the system by default, with a System / Light / Dark choice that is
+  remembered between runs.
 - **External edits:** notices when the file changes elsewhere and never overwrites it silently.
-- **Themes:** a picker with color previews. Rio ships no themes, so its editor offers the 889
-  Rio-format themes from mbadolato/iTerm2-Color-Schemes (MIT) and downloads the one you pick into
-  `themes/`. Ghostty lists its 819 bundled themes.
+- **Themes:** a searchable dropdown with color previews. Rio ships no themes, so its editor offers
+  the 889 Rio-format themes from mbadolato/iTerm2-Color-Schemes (MIT) and downloads the one you pick
+  into `themes/`. Ghostty lists its 819 bundled themes.
 - **Rio:** reloads by itself when the file changes. The editor also offers per-platform overrides
   (`[platform.macos.window]` and so on) through "Applies to".
 - **Ghostty:** every save is checked by Ghostty's own `+validate-config` first. After saving,
-  the editor asks a running Ghostty to reload via AppleScript (`reload_config`). On Linux,
+  the editor asks a running Ghostty to reload via AppleScript (`reload_config`) on macOS. On Linux,
   press Ctrl+Shift+, instead.
-
-## Use
-
-```sh
-dotnet publish src/RioSettings -c Release -o out       # → out/rio-settings
-dotnet publish src/GhosttySettings -c Release -o out   # → out/ghostty-settings
-./out/ghostty-settings                                 # opens the browser
-./out/rio-settings --config path/to/config.toml --no-open --port 5299
-```
-
-The server listens on `127.0.0.1` only. Every API call needs the random token from the URL it
-prints. It stops a few minutes after the browser tab closes, unless `--stay` is given.
 
 ## Layout
 
 ```
-src/Settings.Core/        shared: web server, save/diff/conflict flow, setting types, UI runtime (wwwroot)
-src/Settings.Generators/  Roslyn source generator: <terminal>-source.json + <terminal>-overlay.json
-                          → AppSchema (descriptors) + the complete settings page
-src/RioSettings/          Rio adapter: TOML format (Tomlyn spans), paths, themes
-src/GhosttySettings/      Ghostty adapter: line format, +validate-config, AppleScript reload
-schema/<terminal>/        generated source schema + hand-written overlay
-tools/<terminal>/         scripts that regenerate the source schema
+gpui/
+  crates/settings-core    Terminal-agnostic core: schema model, ConfigFormat seam, save flow, line diff
+  crates/settings-ui      The GPUI window, shared by both apps; UI integration tests in tests/ui.rs
+  crates/rio-config       Rio: schema merge, span-splicing config.toml format, value checks, themes
+  crates/ghostty-config   Ghostty: schema merge, line format, +validate-config, reload, themes
+  apps/rio-settings       main.rs = settings_ui::run(rio_config::app(), Rio's brand)
+  apps/ghostty-settings   main.rs = settings_ui::run(ghostty_config::app(), Ghostty's brand)
+schema/<terminal>/        Generated source schema (<terminal>-source.json) + hand-written overlay (<terminal>-overlay.json)
+tools/<terminal>/         Scripts that regenerate the source schema and theme catalogue
+tools/gpui/               macOS .app bundler (package-macos.ts) and app icon generator (make-icons.ts)
+brand/                    Terminal logos and app icons
 ```
+
+The schemas in `schema/<terminal>/` (`*-source.json` + `*-overlay.json`) are compiled in with
+`include_str!` and merged at startup.
+
+## Run
+
+```sh
+cd gpui
+cargo run -p rio-settings -- --config /tmp/copy-of-config.toml
+cargo run -p ghostty-settings -- --config /tmp/copy-of-config.ghostty
+```
+
+Without `--config` they edit the live configs (`~/.config/rio/config.toml` or `$RIO_CONFIG_HOME`;
+`~/Library/Application Support/com.mitchellh.ghostty/config[.ghostty]` on macOS or
+`~/.config/ghostty/config[.ghostty]`). Always test against a copy.
 
 ## Following a terminal release
 
@@ -56,56 +66,66 @@ tools/<terminal>/         scripts that regenerate the source schema
 node tools/rio/update-schema.ts --update   # needs cargo; builds rio-backend from git
 node tools/rio/update-themes.ts            # refreshes the Rio theme catalogue (iTerm2-Color-Schemes, pinned commit)
 node tools/ghostty/update-schema.ts        # needs the installed Ghostty; fetches Config.zig for its tag
-dotnet build TerminalSettings.slnx         # schema drift shows up as RIO*/GHO* warnings
+cargo test --manifest-path gpui/Cargo.toml # schema drift fails real_schema_files_have_no_drift
 ```
 
 Options the overlay doesn't describe yet still show up, with a basic control.
 
-## Develop
+## Test and lint
 
 ```sh
-dotnet test --solution TerminalSettings.slnx
+cd gpui
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Requires the .NET 10 SDK, plus Node 22.18+ (and cargo for Rio) to regenerate schemas.
+Requires Rust (stable) and Node 22.18+ for the TypeScript scripts in `tools/`.
+
+`crates/settings-ui/tests/ui.rs` drives the real window headlessly (clicks, typing, dropdowns,
+action suggestions, the save dialog) and checks the file on disk.
 
 Two tests check every value the controls can produce against the terminal's own parser:
-- **Ghostty:** `ghostty +validate-config`, which needs Ghostty installed.
-- **Rio:** `tools/rio/schema-dump validate`, which needs `cargo build --release` in `tools/rio/schema-dump`.
+- **Ghostty:** `ghostty +validate-config`, which needs Ghostty installed (`crates/ghostty-config/tests/widget_values.rs`).
+- **Rio:** `tools/rio/schema-dump validate`, which needs `cargo build --release` in `tools/rio/schema-dump` (`crates/rio-config/tests/widget_values.rs`).
 
 Each skips itself when its tool isn't available.
 
-### Platforms
+## Platforms
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | rio-settings | ✓ | ✓ | ✓ |
 | ghostty-settings | ✓ | ✓ | (no Ghostty for Windows) |
 
-Platform-specific pieces live in `Settings.Core`:
-- **Fonts:** CoreText on macOS, `fc-list` on Linux, the registry font list on Windows.
-- **File picker:** "Choose…" opens the page's own picker, which lists folders through the
-  server (`/api/files`). Browsers never reveal real paths, and native dialogs started by a
-  background process open behind the browser on Windows, so there are no OS dialogs.
-- **Line endings:** saves keep the file's existing endings, so CRLF files stay CRLF.
-
-**Testing on Windows from a Mac.** Native AOT can't cross-compile, so build a self-contained
-single-file exe instead and run it in a Windows VM:
+Building on Linux needs GPUI's system libraries, e.g. on Debian/Ubuntu:
 
 ```sh
-dotnet publish src/RioSettings -c Release -r win-arm64 --self-contained \
-  -p:PublishAot=false -p:PublishSingleFile=true -o out-win
+sudo apt-get install pkg-config libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev \
+  libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libvulkan-dev libzstd-dev libssl-dev
 ```
 
-The real AOT Windows builds come from the release workflow's Windows runners.
+## Package for macOS
 
-### Screenshots
+```sh
+node tools/gpui/package-macos.ts
+```
 
-`node tools/screenshots.ts` regenerates `docs/images/*.png`. It needs both apps published to
-`out/` and Google Chrome. It drives headless Chrome against throwaway demo configs at 2× and
-never touches your real config.
+This builds both apps with the `dist` profile (release plus whole-program optimisation and no
+symbol table: ~17 MB per app instead of ~30 MB, same startup; a clean build takes ~3 minutes)
+and writes `gpui/target/macos/Rio Settings.app`, `Ghostty Settings.app` and a zip of the two (or
+pass `--app rio-settings` / `--app ghostty-settings` to build and zip just one as
+`<app>-macos-<arch>.zip`). The bundles open from Finder like any app, with their name in the menu
+bar and their icon in the Dock. They're ad-hoc signed only (not notarized), so on another Mac
+Gatekeeper blocks the first launch: click Done, then System Settings → Privacy & Security → Open
+Anyway, or run `xattr -dr com.apple.quarantine "Rio Settings.app"` once. To open a bundle on a
+copy: `open "Rio Settings.app" --args --config <copy>`.
 
-### Releasing
+## Screenshots
+
+`node tools/screenshots.ts` regenerates `docs/images/*.png` using throwaway demo configs and never
+touches your real config.
+
+## Releasing
 
 Each app is released on its own, and the tag is the version. To release, push a tag:
 
@@ -114,9 +134,9 @@ git tag rio-settings/v1.2.3 && git push origin rio-settings/v1.2.3
 ```
 
 The release workflow then:
-1. builds that app with Native AOT for each platform,
-2. creates the GitHub release as a draft with the executables, archives and `SHA256SUMS`
-   attached,
+1. builds that app with the `dist` profile for each platform (`.app` zip on macOS, `.tar.gz` on
+   Linux, `.zip` on Windows),
+2. creates the GitHub release as a draft with the archives and `SHA256SUMS` attached,
 3. publishes it.
 
 The repo has immutable releases on, so a published release can't be changed. To fix a release,
@@ -125,4 +145,5 @@ push a new version.
 - **Release notes:** `release-notes/<app>/<version>.md` if it exists, else the annotated tag's
   message, else GitHub's generated notes.
 - **Pre-releases:** a suffix such as `1.2.3-alpha.1` marks the release as a pre-release.
-- **Dry run:** run the workflow by hand with a tag to build everything without releasing.
+- **Dry run:** run the workflow by hand (`workflow_dispatch`) with a tag to build everything
+  without releasing.

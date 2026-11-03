@@ -125,7 +125,7 @@ fn is_color_name(v: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == ' ')
 }
 
-/// The shortest text that reads back as the same number, like .NET's "R" format for the usual range.
+/// The shortest text that reads back as the same number.
 fn format_float(d: f64) -> String {
     format!("{d}")
 }

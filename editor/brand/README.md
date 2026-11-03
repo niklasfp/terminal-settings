@@ -1,8 +1,8 @@
 # Brand assets
 
 Logos and palettes of the terminals each editor configures. Each editor embeds only its own
-logo. The palettes in `src/Settings.Core/wwwroot/app.css` (`[data-brand=…]`) were taken
-from the projects' websites.
+logo. The palettes in `gpui/apps/<app>/<terminal>-theme.json` were taken from the projects'
+websites.
 
 | File | Source | License |
 |---|---|---|

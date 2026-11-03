@@ -7,12 +7,42 @@ use crate::view::{
 };
 use gpui_kit::component::input;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
+use std::path::Path;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Appearance {
     System,
     Light,
     Dark,
+}
+
+impl Appearance {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s.trim() {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
+    pub fn load(path: &Path) -> Self {
+        std::fs::read_to_string(path).map_or(Self::System, |s| Self::parse(&s))
+    }
+
+    pub fn save(self, path: &Path) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, format!("{}\n", self.as_str()));
+    }
 }
 
 /// App-wide shortcuts for the menu commands (window-level ones like ⌘S live in `view::bind_keys`).

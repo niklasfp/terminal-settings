@@ -112,6 +112,8 @@ pub struct SettingsWindow {
     /// Every font and theme dropdown lists these (shared, so each list is built once).
     pub(crate) fonts: Rc<Vec<FontItem>>,
     pub(crate) themes: Rc<Vec<ThemeItem>>,
+    pub(crate) lists: HashMap<String, Rc<Vec<SharedString>>>,
+    pub(crate) suggest: Option<crate::controls::SuggestState>,
     pub(crate) next_row_id: u64,
     pub(crate) subs: Vec<Subscription>,
     errors: FieldErrors,
@@ -157,6 +159,11 @@ impl SettingsWindow {
             }
         });
 
+        let appearance = cx
+            .try_global::<crate::AppearanceFile>()
+            .map(|f| Appearance::load(&f.0))
+            .unwrap_or(Appearance::System);
+
         let mut this = Self {
             app,
             path,
@@ -165,6 +172,8 @@ impl SettingsWindow {
             controls: HashMap::new(),
             fonts: Rc::new(fonts.into_iter().map(FontItem).collect()),
             themes: Rc::new(Vec::new()),
+            lists: HashMap::new(),
+            suggest: None,
             next_row_id: 0,
             subs: Vec::new(),
             errors: FieldErrors::new(),
@@ -172,7 +181,7 @@ impl SettingsWindow {
             search_text: schema.settings.iter().map(|s| (s.key.clone(), model::search_text(schema, s))).collect(),
             active_group: schema.groups.first().map(|g| g.id.clone()).unwrap_or_default(),
             scope_select,
-            appearance: Appearance::System,
+            appearance,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             busy: false,
@@ -181,12 +190,14 @@ impl SettingsWindow {
             _poll: poll,
         };
 
+        this.apply_appearance(appearance, window, cx);
         for s in &schema.settings {
             let control = this.create_control(s, window, cx);
             this.controls.insert(s.key.clone(), control);
         }
         this.sync_all(window, cx);
         this.load_themes(window, cx);
+        this.load_lists(window, cx);
 
         let search_sub = cx.subscribe_in(&this.search, window, |this, _, ev: &InputEvent, _, cx| {
             if matches!(ev, InputEvent::Change) {
@@ -530,7 +541,11 @@ impl SettingsWindow {
 
     // ---------- appearance ----------
 
-    fn set_appearance(&mut self, appearance: Appearance, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn appearance(&self) -> Appearance {
+        self.appearance
+    }
+
+    fn apply_appearance(&mut self, appearance: Appearance, window: &mut Window, cx: &mut Context<Self>) {
         self.appearance = appearance;
         match appearance {
             Appearance::System => Theme::sync_system_appearance(Some(window), cx),
@@ -539,6 +554,13 @@ impl SettingsWindow {
         }
         menus::set(&self.app_name(), appearance, cx);
         cx.notify();
+    }
+
+    fn set_appearance(&mut self, appearance: Appearance, window: &mut Window, cx: &mut Context<Self>) {
+        self.apply_appearance(appearance, window, cx);
+        if let Some(path) = cx.try_global::<crate::AppearanceFile>().map(|f| f.0.clone()) {
+            appearance.save(&path);
+        }
     }
 
     /// The name shown in the menu bar, e.g. "Rio Settings".

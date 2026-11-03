@@ -1,9 +1,9 @@
 # AGENTS.md
 
-The GPUI Kit port of the settings editors. See README.md for layout and commands. The rules in
-`../AGENTS.md` about config edits still apply here: splice into exact spans, re-parse after every
-edit, TOML 1.0 output only, atomic writes through symlinks, and nothing terminal-specific in the
-core.
+Rules for the GPUI Kit workspace. See [README.md](README.md) for layout and commands. The rules in
+[../AGENTS.md](../AGENTS.md) about config edits apply here: splice into exact spans, re-parse after
+every edit, TOML 1.0 output only, atomic writes through symlinks, and nothing terminal-specific in
+the core.
 
 ## Standing rules
 
@@ -16,7 +16,7 @@ core.
   `settings_core::values`. Theme folder and ordering are `settings_core::themes_dir` /
   `theme_list`. If you're about to write the same thing in the second terminal crate, move it
   into core instead.
-- The schema files in `editor/schema/` are shared with the .NET apps. Don't fork them here.
+- The schema files live in `editor/schema/<terminal>/`.
 - New widget types: describe them in the overlay, then update `SettingType`, the Rio value writer
   (`rio-config/src/values.rs`), and `create_control` / `on_input` / `sync` / `render_control` in
   `crates/settings-ui/src/controls.rs` (and Ghostty's writer in `ghostty-config`).

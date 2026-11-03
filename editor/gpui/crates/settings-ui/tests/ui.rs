@@ -521,3 +521,60 @@ fn a_font_list_drops_a_font_unticked_in_its_dropdown(cx: &mut TestAppContext) {
     f.save(cx);
     assert_eq!(read(&f.path), "font-family = Alpha Mono\nfont-size = 13\n");
 }
+
+#[gpui_kit::test]
+fn the_appearance_choice_is_remembered_between_runs(cx: &mut TestAppContext) {
+    use settings_ui::menus::Appearance;
+    use settings_ui::view::AppearanceDark;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let pref = dir.path().join("rio-settings").join("appearance");
+    cx.update(|cx| cx.set_global(settings_ui::AppearanceFile(pref.clone())));
+
+    let first = open(cx, "");
+    assert_eq!(cx.update(|cx| first.view.read(cx).appearance()), Appearance::System);
+    cx.update_window(first.window, |_, window, cx| window.dispatch_action(Box::new(AppearanceDark), cx)).expect("window");
+    cx.run_until_parked();
+    assert_eq!(read(&pref), "dark\n");
+
+    let second = open(cx, "");
+    assert_eq!(cx.update(|cx| second.view.read(cx).appearance()), Appearance::Dark);
+    assert!(cx.update(|cx| gpui_kit::component::Theme::global(cx).is_dark()));
+}
+
+#[gpui_kit::test]
+fn action_suggestions_complete_a_ghostty_key_binding(cx: &mut TestAppContext) {
+    let mut app = ghostty_config::app();
+    app.after_save = || None;
+    app.validate = None;
+    app.lists = Some(|name| match name {
+        ghostty_config::ACTIONS_LIST => vec!["close_surface".into(), "new_tab".into(), "new_window".into()],
+        _ => Vec::new(),
+    });
+    let f = open_with(cx, app, "config.ghostty", "");
+    cx.run_until_parked(); // action list loads in the background
+
+    f.search(cx, "keybind");
+    f.ui(cx, |window, cx| window.click("keybind:add", cx));
+    f.ui(cx, |window, cx| {
+        window.click("keybind:0:trigger", cx);
+        window.input("super+n", cx);
+        window.click("keybind:0:action", cx);
+        window.input("new", cx);
+    });
+    f.ui(cx, |window, _| {
+        assert!(window.try_find("keybind:0:action:suggest:new_tab").is_some(), "matching actions are offered");
+        assert!(window.try_find("keybind:0:action:suggest:new_window").is_some());
+    });
+    f.ui(cx, |window, cx| {
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    f.ui(cx, |window, _| {
+        assert_eq!(window.find("keybind:0:action").value(), Some("new_window"));
+        assert!(window.try_find("keybind:0:action:suggestions").is_none(), "picking closes the list");
+    });
+    f.save(cx);
+    assert_eq!(read(&f.path), "keybind = super+n=new_window\n");
+}
+

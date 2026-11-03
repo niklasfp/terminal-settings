@@ -15,8 +15,8 @@ use gpui_kit::*;
 use settings_core::AppDefinition;
 use std::path::PathBuf;
 
-/// The release workflow stamps the tag's version in through `SETTINGS_VERSION` at build time
-/// (like the .NET apps' `-p:Version`); local builds report the crate version.
+/// The release workflow stamps the tag's version in through `SETTINGS_VERSION` at build time;
+/// local builds report the crate version.
 pub const VERSION: &str = match option_env!("SETTINGS_VERSION") {
     Some(v) => v,
     None => env!("CARGO_PKG_VERSION"),
@@ -37,6 +37,26 @@ pub(crate) struct LogoPath(pub &'static str);
 
 impl Global for LogoPath {}
 
+/// Where the user's System / Light / Dark choice is remembered between runs.
+pub struct AppearanceFile(pub PathBuf);
+
+impl Global for AppearanceFile {}
+
+fn appearance_path(app_name: &str) -> PathBuf {
+    let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(windows) {
+        let base = env("LOCALAPPDATA")
+            .or_else(|| std::env::home_dir().map(|h| h.join("AppData").join("Local")))
+            .unwrap_or_default();
+        return base.join(app_name).join("appearance");
+    }
+    let base = env("XDG_STATE_HOME")
+        .or_else(|| env("XDG_CONFIG_HOME"))
+        .or_else(|| std::env::home_dir().map(|h| h.join(".config")))
+        .unwrap_or_default();
+    base.join(app_name).join("appearance")
+}
+
 /// Parses the command line and runs the settings window until it's closed.
 pub fn run(app: AppDefinition, brand: Brand) {
     let app: &'static AppDefinition = Box::leak(Box::new(app));
@@ -48,9 +68,12 @@ pub fn run(app: AppDefinition, brand: Brand) {
         gpui_kit::init(cx);
         install_brand_theme(&brand, cx);
         cx.set_global(LogoPath(assets::logo_path(brand.logo)));
+        let pref = appearance_path(app.name);
+        let initial = menus::Appearance::load(&pref);
+        cx.set_global(AppearanceFile(pref));
         view::bind_keys(cx);
         menus::bind_keys(cx);
-        menus::set(&app_name(app), menus::Appearance::System, cx);
+        menus::set(&app_name(app), initial, cx);
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1180.), px(820.)), cx)),

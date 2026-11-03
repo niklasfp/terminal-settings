@@ -2,39 +2,43 @@
 
 **A real settings window for terminals that only have a config file.**
 Open it, change things, save. Your terminal picks the changes up. No more hunting through
-config docs or editing TOML by hand.
+config docs or editing config files by hand.
 
 ![Rio settings and Ghostty settings side by side](docs/images/hero.png)
 
-There are two separate apps, one per terminal:
+There are two separate native desktop apps, one per terminal:
 
 | | For | Runs on |
 |---|---|---|
 | **rio-settings** | [Rio](https://rioterm.com) | macOS, Linux, Windows |
 | **ghostty-settings** | [Ghostty](https://ghostty.org) | macOS, Linux (Ghostty has no Windows version) |
 
-Each one is a single small program. There's nothing to install, and no runtime or browser
-extension is needed. It opens a settings page in your normal browser and saves straight to the
-config file your terminal already reads.
+Each one is a standalone native app with its own window, menus, and icon. There is no runtime or
+browser extension to install, and it saves straight to the config file your terminal already reads.
 
 ## What you get
 
-- **Every setting, explained.** All options the terminal supports, grouped into sections, with
-  the terminal's own documentation, the default value, and badges like *macOS only* or
-  *Restart needed*.
-- **Proper controls.** Switches, sliders, color pickers with live swatches, a font picker that
-  previews each font, a theme picker with color previews, key-binding and palette editors, and
-  file pickers for images and shaders.
+- **Every setting, explained.** All options the terminal supports, grouped into sections with counts
+  of what your config sets, the terminal's own documentation, the default value, and badges like
+  *In your config*, *macOS only*, or *Restart needed*.
+- **Proper controls.** Switches, sliders, color pickers with live swatches, searchable dropdowns
+  that preview each font in its own face (with multi-select fallback order) and each theme with its
+  colors, key-binding editors with action suggestions, palette editors, and path fields with a
+  native file dialog, a button to reveal the file in Finder / Explorer / your file manager,
+  existence checks, and drag-and-drop.
 - **Your file stays yours.** Saving only changes the lines you edited. Comments, ordering and
   formatting are kept, and you see an exact diff before anything is written. A backup
-  (`config.toml.bak`) is kept next to the file.
-- **Changes apply right away.** Rio reloads by itself. With Ghostty, the editor asks it to
-  reload (on macOS; on Linux, press <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>,</kbd> in Ghostty).
-- **Searchable.** Press <kbd>/</kbd> and type, e.g. `opacity` or `font`.
-- **Light and dark.** Follows your system, or pick one. Each editor wears its terminal's own
-  colors and logo.
-- **Safe to run.** The page is only reachable from your own computer, guarded by a one-time
-  key. Nothing is sent anywhere. The only network use is downloading a Rio theme you choose.
+  (`.bak`) is kept next to the file.
+- **Changes apply right away.** Rio reloads by itself. With Ghostty, every save is checked with
+  `ghostty +validate-config` first, and the editor asks Ghostty to reload on macOS (on Linux, press
+  <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>,</kbd> in Ghostty).
+- **Searchable and keyboard-friendly.** Press <kbd>/</kbd> or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd>
+  and type, e.g. `opacity` or `font`. Native menus and shortcuts handle saving, reloading,
+  appearance, and opening the config file.
+- **Light and dark.** Follows your system or lets you pick Light or Dark (and remembers your
+  choice). Each editor wears its terminal's own colors and logo.
+- **Local and private.** Everything runs locally in a native window. Nothing is sent anywhere; the
+  only network use is downloading a Rio theme when you pick one from the catalogue.
 
 | Rio, dark | Ghostty, light |
 |---|---|
@@ -44,45 +48,48 @@ config file your terminal already reads.
 
 ## Install
 
-Download the file for your computer from the
+Download the archive for your computer from the
 [latest release](https://github.com/niklasfp/terminal-settings/releases). Releases are per app,
 e.g. `rio-settings/v1.0.0`.
 
 | Your computer | File |
 |---|---|
-| Mac with Apple silicon | `…-osx-arm64` |
-| Linux, Intel/AMD | `…-linux-x64` |
-| Linux, ARM | `…-linux-arm64` |
-| Windows, Intel/AMD (Rio only) | `rio-settings-…-win-x64.exe` |
-| Windows on ARM (Rio only) | `rio-settings-…-win-arm64.exe` |
+| Mac with Apple silicon | `…-osx-arm64.zip` (`Rio Settings.app` or `Ghostty Settings.app`) |
+| Linux, Intel/AMD | `…-linux-x64.tar.gz` |
+| Linux, ARM | `…-linux-arm64.tar.gz` |
+| Windows, Intel/AMD (Rio only) | `rio-settings-…-win-x64.zip` |
+| Windows on ARM (Rio only) | `rio-settings-…-win-arm64.zip` |
 
-Each release also has `.tar.gz` / `.zip` archives and a `SHA256SUMS` file if you want to verify
-the download.
+Each release also includes a `SHA256SUMS` file if you want to verify the download.
 
-**First run on macOS:** the apps aren't signed by Apple, so macOS will block them the first
-time. Allow it once from the terminal:
+**First run on macOS:** unzip the download and drag **Rio Settings.app** (or **Ghostty Settings.app**)
+to **Applications**. Because the apps aren't notarized by Apple, macOS blocks the first launch:
+click **Done**, then open **System Settings → Privacy & Security**, scroll to Security and click
+**Open Anyway**. Or clear the quarantine attribute from the terminal once:
 
 ```sh
-chmod +x rio-settings-*-osx-arm64
-xattr -d com.apple.quarantine rio-settings-*-osx-arm64
+xattr -dr com.apple.quarantine "/Applications/Rio Settings.app"
 ```
 
-**Linux:** `chmod +x` the file. **Windows:** if SmartScreen warns you, choose *More info →
-Run anyway*.
+(Right-click → Open no longer bypasses Gatekeeper on macOS 15 and later.)
 
-Optionally move it somewhere on your `PATH`, e.g. `~/.local/bin/rio-settings`.
+**Linux:** extract the `.tar.gz` archive and move the binary somewhere on your `PATH`, e.g.
+`~/.local/bin/rio-settings`.
+
+**Windows:** extract the `.zip` archive and run `rio-settings.exe`. If SmartScreen warns you,
+choose *More info → Run anyway*.
 
 ## Use
 
-Run the app from a terminal:
+On macOS, open **Rio Settings** or **Ghostty Settings** from Applications, Spotlight, or the
+terminal. On Linux and Windows, launch the binary directly:
 
 ```sh
 rio-settings        # or: ghostty-settings
 ```
 
-Your browser opens on the settings page. Change what you like, then press **Save** (or
-<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>). Check the preview and confirm. Close the tab when
-you're done; the app quits a few minutes later on its own.
+Change what you like, then press **Save…** (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd>) to
+review the diff and write the file.
 
 Handy bits:
 - The **↺** button next to a changed setting undoes your edit. On a setting saved in the file,
@@ -94,12 +101,11 @@ Handy bits:
 
 | Option | What it does |
 |---|---|
-| `-c`, `--config <path>` | Edit a different config file |
-| `-p`, `--port <n>` | Use a fixed port instead of a random free one |
-| `--no-open` | Don't open the browser; just print the address |
-| `--stay` | Keep running after the browser tab is closed |
-| `-v`, `--version` | Print the version |
+| `--config <path>` | Edit a different config file |
+| `--version` | Print the version |
 | `-h`, `--help` | Show help, including the config file it will edit |
+
+On macOS, you can pass options to the app bundle with `open -a "Rio Settings" --args --config /path/to/config.toml`.
 
 ### Which file gets edited
 
@@ -114,26 +120,29 @@ Handy bits:
 If `RIO_CONFIG_HOME` is set, Rio (and the editor) use that folder instead.
 
 **Ghostty** reads `$XDG_CONFIG_HOME/ghostty/config.ghostty` (usually
-`~/.config/ghostty/config.ghostty`), or `config` without the extension in older setups. The
-editor edits whichever of the two exists. On macOS Ghostty also reads
-`~/Library/Application Support/com.mitchellh.ghostty/config`, which is loaded later and wins.
-The editor doesn't touch that file.
+`~/.config/ghostty/config.ghostty`), or `config` without the extension in older setups. On macOS,
+Ghostty also reads `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` (or
+`config`), which is loaded later and overrides the `~/.config/ghostty` file. Matching Ghostty's own
+config-opening logic, the editor checks the Application Support location first on macOS, then the
+XDG location (skipping zero-byte files), and creates `config.ghostty` in Application Support on
+macOS or `$XDG_CONFIG_HOME/ghostty` on Linux when no config exists yet.
 
 ## Troubleshooting
 
-- **"This page belongs to an earlier run of the editor"**: the app was restarted. Use the
-  new address it printed, or just run it again.
 - **Ghostty didn't reload after saving (macOS)**: the first time, macOS asks whether the editor
   may control Ghostty. If you said no, allow it in *System Settings → Privacy & Security →
   Automation*, or press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>,</kbd> in Ghostty.
+- **Ghostty Settings says `ghostty` was not found when saving**: every save is checked with
+  `ghostty +validate-config`. Make sure Ghostty is installed in `/Applications/Ghostty.app` or on
+  your `PATH`, or set `GHOSTTY_BIN` to the `ghostty` binary.
 - **A change doesn't show up**: some settings only apply to new windows or after a restart.
   They're marked with a badge.
 - **Font list is empty on Linux**: install `fontconfig` (it provides `fc-list`).
 
 ## Building from source and contributing
 
-See [editor/README.md](editor/README.md): how it's built, how the settings pages are generated
-from each terminal's own source, and how to follow new terminal releases.
+See [editor/README.md](editor/README.md): how the apps are built, how the settings schemas are
+generated from each terminal's own source, and how to follow new terminal releases.
 
 ## License
 
