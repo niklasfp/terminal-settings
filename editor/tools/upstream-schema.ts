@@ -630,9 +630,13 @@ function cmdPr(): void {
     return;
   }
 
-  const entries = readdirSync(bundlesDir).filter((d) => statSync(join(bundlesDir, d)).isDirectory());
-  for (const entry of entries) {
-    const dir = join(bundlesDir, entry);
+  const bundleDirs = existsSync(join(bundlesDir, "manifest.json"))
+    ? [bundlesDir]
+    : readdirSync(bundlesDir)
+        .map((d) => join(bundlesDir, d))
+        .filter((d) => statSync(d).isDirectory() && existsSync(join(d, "manifest.json")));
+
+  for (const dir of bundleDirs) {
     const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as Manifest;
     const target = manifest.target;
     if (!(target in ALLOWED_FILES)) {
