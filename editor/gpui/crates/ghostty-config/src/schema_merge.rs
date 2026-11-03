@@ -609,4 +609,13 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn real_schema_files_have_no_drift() {
+        let diags: Vec<String> = crate::schema_diagnostics()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(diags.is_empty(), "{diags:#?}");
+    }
 }
