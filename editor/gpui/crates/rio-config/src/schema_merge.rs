@@ -27,7 +27,9 @@ pub fn merge_schema(
     let app = obj(&overlay, "app").unwrap_or(&empty);
     let terminal = string(app, "terminal").unwrap_or_else(|| "Terminal".into());
     let mut schema = Schema {
-        revision: string(&source, "rioRevision").unwrap_or_else(|| "unknown".into()),
+        revision: string(&source, "rioVersion")
+            .or_else(|| string(&source, "rioRevision"))
+            .unwrap_or_else(|| "unknown".into()),
         title: string(app, "title").unwrap_or_else(|| format!("{terminal} settings")),
         terminal,
         brand: string(app, "brand").unwrap_or_default(),
@@ -432,6 +434,18 @@ mod tests {
     }
 
     #[test]
+    fn revision_prefers_rio_version_over_rio_revision() {
+        let (schema, _) = merge(SOURCE, OVERLAY);
+        assert_eq!(schema.revision, "abc1234def");
+        let with_version = SOURCE.replace(
+            "\"rioRevision\": \"abc1234def\"",
+            "\"rioVersion\": \"v0.5.29\", \"rioRevision\": \"abc1234def\"",
+        );
+        let (schema, _) = merge(&with_version, OVERLAY);
+        assert_eq!(schema.revision, "v0.5.29");
+    }
+
+    #[test]
     fn enum_values_and_default_use_the_toml_spelling() {
         let (schema, _) = merge(SOURCE, OVERLAY);
         let shape = get(&schema, "cursor.shape");
@@ -528,7 +542,7 @@ mod tests {
             .filter(|d| d.is_error)
             .map(ToString::to_string)
             .collect();
-        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(errors.is_empty(), "schema errors:\n{}", errors.join("\n"));
         assert!(crate::schema().settings.len() > 100);
     }
 
@@ -538,6 +552,6 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert!(diags.is_empty(), "{diags:#?}");
+        assert!(diags.is_empty(), "schema diagnostics:\n{}", diags.join("\n"));
     }
 }

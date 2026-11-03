@@ -62,11 +62,36 @@ Without `--config` they edit the live configs (`~/.config/rio/config.toml` or `$
 
 ## Following a terminal release
 
+`.github/workflows/upstream-schema.yml` checks nightly whether Rio (`raphamorim/rio` GitHub
+Releases) or Ghostty (`ghostty-org/ghostty` `vX.Y.Z` tags) has shipped a release — and on Mondays
+whether `mbadolato/iTerm2-Color-Schemes` has updated `rio/` — and proposes the regenerated schema as
+a draft PR on `schema/rio`, `schema/ghostty`, or `schema/rio-themes`:
+
+1. **Detect (`ubuntu-latest`, read-only):** compares the latest upstream release tag against
+   `rioVersion` in `schema/rio/rio-source.json` and `ghosttyVersion` in
+   `schema/ghostty/ghostty-source.json` (skipping any version that already has an open PR).
+2. **Regenerate (`contents: read`, no secrets):** builds `tools/rio/schema-dump` for the release tag
+   on Linux or downloads and verifies the signed `Ghostty.dmg` (`com.mitchellh.ghostty`, Team ID
+   `24VZTF6M5V`) on macOS, regenerates `*-source.json`, runs `cargo test -p <crate> --locked` to
+   collect merge diagnostics (`RIO001…` / `GHO001…`) and widget-value checks, and uploads an
+   artifact bundle.
+3. **Open or update the draft PR (`contents: write, pull-requests: write`):** commits only the
+   allowlisted schema files via GitHub's GraphQL `createCommitOnBranch` API (so commits are signed)
+   and opens or updates the draft PR with the settings diff table, diagnostics, test results, and
+   reviewer checklist. Set `APP_ID` + `APP_PRIVATE_KEY` (for `actions/create-github-app-token`) or
+   `SCHEMA_BOT_TOKEN` in repository secrets so the PR triggers `ci.yml`; otherwise it falls back to
+   `GITHUB_TOKEN`.
+4. **Failure reporting:** if detection or regeneration fails, the workflow opens or comments on an
+   issue titled `Upstream schema update failed for <terminal> <version>`.
+
+You can also trigger the workflow manually (`workflow_dispatch`) with `rio`, `ghostty`, `themes`,
+or `dry_run`, or run the generators locally:
+
 ```sh
-node tools/rio/update-schema.ts --update   # needs cargo; builds rio-backend from git
-node tools/rio/update-themes.ts            # refreshes the Rio theme catalogue (iTerm2-Color-Schemes, pinned commit)
-node tools/ghostty/update-schema.ts        # needs the installed Ghostty; fetches Config.zig for its tag
-cargo test --manifest-path gpui/Cargo.toml # schema drift fails real_schema_files_have_no_drift
+node tools/rio/update-schema.ts --rio v0.5.29   # pins tools/rio/schema-dump/Cargo.toml to the release tag
+node tools/rio/update-themes.ts                 # refreshes the Rio theme catalogue (iTerm2-Color-Schemes)
+node tools/ghostty/update-schema.ts             # needs the installed Ghostty; fetches Config.zig for its tag
+cargo test --manifest-path gpui/Cargo.toml      # schema drift fails real_schema_files_have_no_drift
 ```
 
 Options the overlay doesn't describe yet still show up, with a basic control.

@@ -1,6 +1,6 @@
 // Regenerates schema/rio/rio-themes.json: the catalogue of Rio themes the editor can install.
 //
-//   node tools/rio/update-themes.ts
+//   node tools/rio/update-themes.ts [--commit <sha>]
 //
 // Rio ships no themes; it loads ~/.config/rio/themes/<name>.toml. The themes come from
 // mbadolato/iTerm2-Color-Schemes (MIT), whose rio/ folder holds one TOML per theme. Only that
@@ -13,6 +13,22 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+let commitArg: string | null = null;
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === "--commit") {
+    commitArg = process.argv[++i] ?? null;
+    if (!commitArg) throw new Error("Missing SHA after --commit");
+  } else if (arg.startsWith("--commit=")) {
+    commitArg = arg.slice("--commit=".length);
+  } else {
+    throw new Error(`Unknown argument: ${arg}. Usage: node tools/rio/update-themes.ts [--commit <sha>]`);
+  }
+}
+if (commitArg && !/^[0-9a-f]{7,40}$/i.test(commitArg)) {
+  throw new Error(`Invalid commit SHA: ${commitArg}`);
+}
+
 const repo = "mbadolato/iTerm2-Color-Schemes";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const work = mkdtempSync(join(tmpdir(), "rio-themes-"));
@@ -22,6 +38,16 @@ try {
   git("clone", "--quiet", "--depth", "1", "--filter=blob:none", "--sparse", `https://github.com/${repo}.git`, "src");
   const src = join(work, "src");
   execFileSync("git", ["sparse-checkout", "set", "rio"], { cwd: src, stdio: ["ignore", "ignore", "inherit"] });
+  if (commitArg) {
+    execFileSync("git", ["fetch", "--quiet", "--depth", "1", "origin", commitArg], {
+      cwd: src,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    execFileSync("git", ["checkout", "--quiet", "FETCH_HEAD"], {
+      cwd: src,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+  }
   const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: src, encoding: "utf8" }).trim();
 
   const ansi = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];

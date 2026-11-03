@@ -43,14 +43,6 @@ function run(args: string[]): string {
 const version = /^\s*-\s*version:\s*(\S+)/m.exec(run(["--version"]))?.[1];
 if (!version) throw new Error("Could not parse `ghostty --version` output");
 
-function tagExists(tag: string): boolean {
-  const r = spawnSync("gh", ["api", `repos/ghostty-org/ghostty/git/refs/tags/${tag}`], {
-    encoding: "utf8",
-  });
-  if (r.error) return false; // gh not available; the raw fetch below decides
-  return r.status === 0;
-}
-
 async function fetchConfigZig(ref: string): Promise<string | null> {
   const url = `https://raw.githubusercontent.com/ghostty-org/ghostty/${ref}/src/config/Config.zig`;
   const res = await fetch(url);
@@ -60,7 +52,7 @@ async function fetchConfigZig(ref: string): Promise<string | null> {
 }
 
 let configZigRef = `v${version}`;
-let zig = tagExists(configZigRef) ? await fetchConfigZig(configZigRef) : null;
+let zig = await fetchConfigZig(configZigRef);
 if (zig === null) {
   console.warn(`warning: tag ${configZigRef} not found; using Config.zig from main`);
   configZigRef = "main";

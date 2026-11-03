@@ -596,7 +596,7 @@ mod tests {
             .filter(|d| d.is_error)
             .map(ToString::to_string)
             .collect();
-        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(errors.is_empty(), "schema errors:\n{}", errors.join("\n"));
         let schema = crate::schema();
         assert!(schema.settings.len() > 200);
         let groups: HashSet<&str> = schema.groups.iter().map(|g| g.id.as_str()).collect();
@@ -616,6 +616,6 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert!(diags.is_empty(), "{diags:#?}");
+        assert!(diags.is_empty(), "schema diagnostics:\n{}", diags.join("\n"));
     }
 }

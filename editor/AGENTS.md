@@ -12,13 +12,13 @@ Guidance for coding agents working in this repo. See [README.md](README.md) for 
   - `crates/rio-config`, `crates/ghostty-config`: terminal-specific format, schema merge, value
     writers, validation, reload, and themes.
   - `apps/rio-settings`, `apps/ghostty-settings`: binary crates for each app.
-- `schema/<terminal>/<terminal>-source.json`: **generated** by `node tools/<terminal>/update-schema.ts`.
-  Never hand-edit it.
+- `schema/<terminal>/<terminal>-source.json`: **generated** by `node tools/<terminal>/update-schema.ts`
+  (automatically proposed as a draft PR by `.github/workflows/upstream-schema.yml`). Never hand-edit it.
 - `schema/<terminal>/<terminal>-overlay.json`: the hand-written layer (groups, ranges, widgets,
   labels where needed).
-- `tools/`: TypeScript scripts for regenerating schemas (`tools/rio/`, `tools/ghostty/`), packaging
-  macOS bundles (`tools/gpui/package-macos.ts`), generating icons (`tools/gpui/make-icons.ts`), and
-  taking README screenshots (`tools/screenshots.ts`).
+- `tools/`: TypeScript scripts for regenerating schemas (`tools/rio/`, `tools/ghostty/`,
+  `tools/upstream-schema.ts`), packaging macOS bundles (`tools/gpui/package-macos.ts`), generating
+  icons (`tools/gpui/make-icons.ts`), and taking README screenshots (`tools/screenshots.ts`).
 - `brand/`: terminal logos and app icons.
 
 ## Standing rules
@@ -43,6 +43,12 @@ Guidance for coding agents working in this repo. See [README.md](README.md) for 
   `type`. A new widget type means updating `SettingType` in `settings-core`, each app's value writer,
   and `create_control` / `on_input` / `sync` / `render_control` in
   `gpui/crates/settings-ui/src/controls.rs`.
+- Schemas track released terminal versions (`--rio vX.Y.Z` pins `tools/rio/schema-dump/Cargo.toml`
+  to that tag and records `rioVersion` in `rio-source.json`; Ghostty records `ghosttyVersion` and
+  `configZigRef`). `.github/workflows/upstream-schema.yml` runs nightly in a read-only job, runs the
+  config crate tests, and opens or updates a draft PR on `schema/<target>` (using a GitHub App token
+  from `APP_ID` + `APP_PRIVATE_KEY` or `SCHEMA_BOT_TOKEN` so `ci.yml` runs on the PR, with signed
+  commits via GraphQL `createCommitOnBranch`).
 - Scripts are TypeScript run with Node's native type stripping (`node file.ts`). No Python,
   no tsx.
 
@@ -52,7 +58,7 @@ Guidance for coding agents working in this repo. See [README.md](README.md) for 
 cargo test --manifest-path gpui/Cargo.toml --workspace --locked
 cargo clippy --manifest-path gpui/Cargo.toml --workspace --all-targets --locked -- -D warnings
 node tools/gpui/package-macos.ts
-node tools/rio/update-schema.ts [--update]
-node tools/rio/update-themes.ts
+node tools/rio/update-schema.ts [--rio v0.5.29]
+node tools/rio/update-themes.ts [--commit <sha>]
 node tools/ghostty/update-schema.ts
 ```

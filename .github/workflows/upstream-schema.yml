@@ -1,0 +1,261 @@
+name: Upstream schema
+
+# Checks nightly whether Rio or Ghostty has shipped a new release (and on Mondays whether
+# mbadolato/iTerm2-Color-Schemes has updated its Rio themes), regenerates the schema in an
+# isolated read-only job, runs the config crate tests to surface any drift or broken values,
+# and opens or updates a draft PR on `schema/<target>` with a signed commit.
+#
+# Regeneration executes upstream code (Rio's build.rs and dependencies, Ghostty.app), so it
+# runs with `contents: read` only and no secrets, handing its output to the `pr` job as an
+# artifact. The `pr` job never builds or runs anything from the artifact; it only validates
+# and commits the fixed allowlist of schema files through GitHub's GraphQL API.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      rio:
+        description: "Force a Rio release tag (e.g. v0.5.29)"
+        required: false
+        type: string
+      ghostty:
+        description: "Force a Ghostty version (e.g. 1.4.0)"
+        required: false
+        type: string
+      themes:
+        description: "Force a Rio theme catalogue update"
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: "Build the schema artifact without opening or updating a PR"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect upstream releases
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      has_updates: ${{ steps.check.outputs.has_updates }}
+      matrix: ${{ steps.check.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            editor/schema
+            editor/tools
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Check recorded versions against upstream
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FORCE_RIO: ${{ inputs.rio }}
+          FORCE_GHOSTTY: ${{ inputs.ghostty }}
+          FORCE_THEMES: ${{ inputs.themes }}
+        run: node editor/tools/upstream-schema.ts detect
+
+  # Builds and runs upstream code (Rio's crates or Ghostty.app): read-only permissions and no secrets.
+  regenerate:
+    name: Regenerate ${{ matrix.display }} (${{ matrix.version }})
+    needs: detect
+    if: needs.detect.outputs.has_updates == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ matrix.target }}
+      OLD_VERSION: ${{ matrix.current }}
+      NEW_VERSION: ${{ matrix.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-gpui
+        with:
+          cache-key: schema-${{ matrix.target }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Download, mount, and verify Ghostty.dmg
+        if: matrix.target == 'ghostty'
+        run: |
+          ver="${NEW_VERSION#v}"
+          dmg="$RUNNER_TEMP/Ghostty.dmg"
+          mnt="$RUNNER_TEMP/ghostty-mnt"
+          curl -fSL --retry 3 -o "$dmg" "https://release.files.ghostty.org/${ver}/Ghostty.dmg"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt"
+
+          app="$mnt/Ghostty.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          info="$(codesign -dv "$app" 2>&1)"
+          echo "$info"
+          grep -q '^Identifier=com\.mitchellh\.ghostty$' <<<"$info" || {
+            echo "::error::Ghostty.app bundle identifier did not match com.mitchellh.ghostty"
+            exit 1
+          }
+          grep -q '^TeamIdentifier=24VZTF6M5V$' <<<"$info" || {
+            echo "::error::Ghostty.app TeamIdentifier did not match 24VZTF6M5V"
+            exit 1
+          }
+          echo "GHOSTTY_BIN=$app/Contents/MacOS/ghostty" >> "$GITHUB_ENV"
+
+      - name: Regenerate schema
+        working-directory: editor
+        run: |
+          before="$RUNNER_TEMP/before-source.json"
+          regen_log="$RUNNER_TEMP/regen.log"
+          : > "$regen_log"
+          case "$TARGET" in
+            rio)
+              cp schema/rio/rio-source.json "$before"
+              node tools/rio/update-schema.ts --rio "$NEW_VERSION" 2> >(tee "$regen_log" >&2)
+              ;;
+            ghostty)
+              cp schema/ghostty/ghostty-source.json "$before"
+              node tools/ghostty/update-schema.ts 2> >(tee "$regen_log" >&2)
+              ;;
+            rio-themes)
+              cp schema/rio/rio-themes.json "$before"
+              node tools/rio/update-themes.ts --commit "$NEW_VERSION" 2> >(tee "$regen_log" >&2)
+              ;;
+          esac
+
+      # A test or drift failure does not stop the PR: it becomes the PR's content ("needs overlay work").
+      - name: Run schema and widget value tests
+        working-directory: editor/gpui
+        run: |
+          crate="rio-config"
+          [[ "$TARGET" == "ghostty" ]] && crate="ghostty-config"
+          log="$RUNNER_TEMP/cargo-test.log"
+          set +e
+          cargo test -p "$crate" --locked -- --nocapture > "$log" 2>&1
+          status=$?
+          set -e
+          cat "$log"
+          echo "TEST_EXIT=$status" >> "$GITHUB_ENV"
+
+      - name: Build PR report and stage artifact
+        env:
+          BEFORE_FILE: ${{ runner.temp }}/before-source.json
+          TEST_LOG: ${{ runner.temp }}/cargo-test.log
+          REGEN_LOG: ${{ runner.temp }}/regen.log
+          OUT_DIR: ${{ runner.temp }}/bundle/${{ matrix.target }}
+        run: node editor/tools/upstream-schema.ts bundle
+
+      - name: Unmount Ghostty.dmg
+        if: always() && matrix.target == 'ghostty'
+        run: |
+          if [[ -d "$RUNNER_TEMP/ghostty-mnt" ]]; then
+            hdiutil detach "$RUNNER_TEMP/ghostty-mnt" -force || true
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: schema-update-${{ matrix.target }}
+          path: ${{ runner.temp }}/bundle/${{ matrix.target }}/
+          if-no-files-found: error
+
+  pr:
+    name: Open or update draft PR
+    needs: [detect, regenerate]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.has_updates == 'true' && needs.regenerate.result == 'success' && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: schema-update-*
+          path: ${{ runner.temp }}/bundles
+
+      - name: Check for GitHub App credentials
+        id: app-check
+        env:
+          APP_ID: ${{ vars.APP_ID || secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          if [[ -n "$APP_ID" && -n "$APP_PRIVATE_KEY" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint GitHub App token
+        id: app-token
+        if: steps.app-check.outputs.configured == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.APP_ID || secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Commit schema updates and open or update draft PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.SCHEMA_BOT_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_BRANCH: ${{ github.ref_name }}
+          BASE_SHA: ${{ github.sha }}
+          BUNDLES_DIR: ${{ runner.temp }}/bundles
+        run: node editor/tools/upstream-schema.ts pr
+
+  report-failure:
+    name: Report failure issue
+    needs: [detect, regenerate]
+    if: ${{ always() && (needs.detect.result == 'failure' || needs.regenerate.result == 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: editor/tools
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Open or update failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MATRIX_JSON: ${{ needs.detect.outputs.matrix }}
+        run: node editor/tools/upstream-schema.ts report-failure
