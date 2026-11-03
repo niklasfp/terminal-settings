@@ -10,10 +10,8 @@ use std::sync::Mutex;
 
 /// First 16 hex chars of the SHA-256 of the text: detects changes on disk since load.
 pub fn version_of(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
-    let mut hex = format!("{digest:x}");
-    hex.truncate(16);
-    hex
+    // Hex-encoded by hand: the digest type changes between sha2 versions and isn't always `LowerHex`.
+    Sha256::digest(text.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 /// What the UI shows for the file right now.
