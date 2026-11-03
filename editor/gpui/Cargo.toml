@@ -23,7 +23,7 @@ gpui-kit = "0.9.0"
 serde_json = { version = "1", features = ["preserve_order"] }
 # toml_edit 0.25 parses TOML 1.1 (spec-1.1.0), like current Rio's `toml`. The editor only emits TOML 1.0.
 toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
-sha2 = "0.10"
+sha2 = "0.11"
 # TLS features are picked per platform in crates/rio-config.
 ureq = { version = "3", default-features = false }
 tempfile = "3"
