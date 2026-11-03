@@ -8,6 +8,15 @@ from the projects' websites.
 |---|---|---|
 | `rio-logo.svg` | [raphamorim/rio](https://github.com/raphamorim/rio) `misc/logo-2024.svg` | MIT |
 | `ghostty-logo.png` | [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) `images/icons/icon_32@2x.png` | MIT |
+| `rio-settings-icon.svg` | Ours, drawn by `tools/gpui/make-icons.ts`: Rio's colors, its eyes as slider knobs | MIT |
+| `ghostty-settings-icon.svg` | Ours, drawn by `tools/gpui/make-icons.ts`: Ghostty's colors, a ghost wearing a gear | MIT |
+| `terminal-settings-icon.svg` | Ours, drawn by `tools/gpui/make-icons.ts`: for a single app that edits both terminals | MIT |
+
+`rio-settings-icon.ico` and `ghostty-settings-icon.ico` are the same icons for Windows (generated
+by the same script, embedded by `gpui/apps/app-build.rs`).
+
+The two `*-settings-icon.svg` files are the editors' app icons. They're deliberately not the
+terminals' own icons, so the editors can't be mistaken for the terminals in the Dock or Finder.
 
 Palettes:
 - **Rio** ([rioterm.com](https://rioterm.com)): fuchsia accent `#c026d3` (light) / `#e879f9` (dark)

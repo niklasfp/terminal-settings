@@ -1,0 +1,14 @@
+[package]
+name = "ghostty-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Shared with rio-settings: embeds the app icon on Windows.
+build = "../app-build.rs"
+
+[dependencies]
+settings-ui.workspace = true
+ghostty-config.workspace = true
+
+[build-dependencies]
+embed-resource.workspace = true

@@ -1,8 +1,10 @@
 name: Release
 
 # Pushing a tag `<app>/v<semver>` (e.g. `git tag rio-settings/v1.2.3 && git push origin rio-settings/v1.2.3`)
-# builds that app with Native AOT for every target it ships on, creates the GitHub release as a
-# draft with the executables, archives and SHA256SUMS attached, and then publishes it.
+# builds that app with Native AOT for every target it ships on, and the native GPUI Kit port
+# (editor/gpui) for the same targets (assets named <app>-gpui-<version>-<rid>.*; a zipped .app on
+# macOS), creates the GitHub release as a draft with the executables, archives and SHA256SUMS
+# attached, and then publishes it.
 # The repo uses immutable releases: a published release is locked, so assets must be attached
 # while it is still a draft.
 #
@@ -158,9 +160,92 @@ jobs:
           path: ${{ runner.temp }}/dist/
           if-no-files-found: error
 
+  # The native GPUI Kit port (editor/gpui), for the same targets, released next to the .NET build
+  # as <app>-gpui-<version>-<rid>.*. Every target builds natively on its own runner.
+  build-gpui:
+    name: ${{ needs.prepare.outputs.app }} ${{ matrix.rid }} (GPUI)
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    env:
+      APP: ${{ needs.prepare.outputs.app }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      RID: ${{ matrix.rid }}
+      # Stamped into --version and, on macOS, the bundle's Info.plist.
+      SETTINGS_VERSION: ${{ needs.prepare.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-gpui
+        with:
+          cache-key: dist-${{ needs.prepare.outputs.app }}
+
+      # The macOS bundler is a TypeScript script run with Node's own type stripping.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: runner.os == 'macOS'
+        with:
+          node-version: 24
+
+      - name: Build the app bundle (macOS)
+        if: runner.os == 'macOS'
+        working-directory: editor
+        run: node tools/gpui/package-macos.ts --app "$APP"
+
+      - name: Build
+        if: runner.os != 'macOS'
+        working-directory: editor/gpui
+        run: cargo build --locked --profile dist -p "$APP"
+
+      - name: Check the executable reports the version
+        run: |
+          ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=".exe"
+          # --version must exit 0 (the step fails otherwise) and print the stamped version.
+          out="$("editor/gpui/target/dist/$APP$ext" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION"* ]] || { echo "::error::$APP --version printed '$out', expected $VERSION"; exit 1; }
+
+      - name: Package
+        run: |
+          ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=".exe"
+          name="$APP-gpui-$VERSION-$RID"
+          dist="$RUNNER_TEMP/dist"
+          stage="$RUNNER_TEMP/stage/$name"
+          mkdir -p "$dist" "$stage"
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # The ad-hoc signed .app, zipped by the bundler (ditto keeps the signature intact).
+            cp "editor/gpui/target/macos/$APP-macos-arm64.zip" "$dist/$name.zip"
+          else
+            cp "editor/gpui/target/dist/$APP$ext" "$stage/$APP$ext"
+            for doc in README.md LICENSE THIRD-PARTY-NOTICES.md; do
+              [[ -f "$doc" ]] && cp "$doc" "$stage/"
+            done
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              pwsh -NoProfile -Command "Compress-Archive -Path '$(cygpath -w "$stage")' -DestinationPath '$(cygpath -w "$dist/$name.zip")'"
+            else
+              chmod +x "$stage/$APP"
+              tar -C "$RUNNER_TEMP/stage" -czf "$dist/$name.tar.gz" "$name"
+            fi
+          fi
+          ls -l "$dist"
+
+      # Named so the publish job's <app>-<version>-* pattern picks it up with the .NET assets.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.APP }}-${{ env.VERSION }}-${{ matrix.rid }}-gpui
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+
   publish:
     name: ${{ needs.prepare.outputs.dry_run == 'true' && 'Collect assets (dry run)' || 'Publish release' }}
-    needs: [prepare, build]
+    needs: [prepare, build, build-gpui]
     runs-on: ubuntu-latest
     permissions:
       contents: write

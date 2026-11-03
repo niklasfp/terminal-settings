@@ -27,13 +27,28 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: github-actions
-    directory: /
+    # The workflows and the local composite actions they share.
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
     groups:
       actions:
         patterns:
           - "*"
+
+  - package-ecosystem: cargo
+    directory: /editor/gpui
+    schedule:
+      interval: weekly
+    groups:
+      # GPUI Kit pins its GPUI snapshot exactly; its crates move together, in their own PR.
+      gpui-kit:
+        patterns:
+          - "gpui*"
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types: [minor, patch]
 
   - package-ecosystem: cargo
     directory: /editor/tools/rio/schema-dump

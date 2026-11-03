@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bezel" x1="512" x2="512" y1="100" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f4f4f6"/><stop offset=".5" stop-color="#b9bcc4"/><stop offset="1" stop-color="#6e717a"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="512" x2="512" y1="168" y2="856" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3551f3"/><stop offset=".55" stop-color="#2236b8"/><stop offset="1" stop-color="#101a6e"/>
+    </linearGradient>
+    <linearGradient id="body" x1="512" x2="512" y1="330" y2="700" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/><stop offset="1" stop-color="#cdd7ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bezel)"/>
+  <rect x="160" y="160" width="704" height="704" rx="140" fill="#1b1d24"/>
+  <rect x="176" y="176" width="672" height="672" rx="126" fill="url(#screen)"/>
+  <path d="M 322 700 L 322 520 A 190 190 0 0 1 702 520 L 702 700 Q 678.3 746 654.5 700 Q 630.8 654 607 700 Q 583.3 746 559.5 700 Q 535.8 654 512 700 Q 488.3 746 464.5 700 Q 440.8 654 417 700 Q 393.3 746 369.5 700 Q 345.8 654 322 700 Z" fill="none" stroke="#7d93ff" stroke-width="44" stroke-opacity="0.12" stroke-linejoin="round"/>
+  <path d="M 322 700 L 322 520 A 190 190 0 0 1 702 520 L 702 700 Q 678.3 746 654.5 700 Q 630.8 654 607 700 Q 583.3 746 559.5 700 Q 535.8 654 512 700 Q 488.3 746 464.5 700 Q 440.8 654 417 700 Q 393.3 746 369.5 700 Q 345.8 654 322 700 Z" fill="none" stroke="#7d93ff" stroke-width="30" stroke-opacity="0.18" stroke-linejoin="round"/>
+  <path d="M 322 700 L 322 520 A 190 190 0 0 1 702 520 L 702 700 Q 678.3 746 654.5 700 Q 630.8 654 607 700 Q 583.3 746 559.5 700 Q 535.8 654 512 700 Q 488.3 746 464.5 700 Q 440.8 654 417 700 Q 393.3 746 369.5 700 Q 345.8 654 322 700 Z" fill="none" stroke="#7d93ff" stroke-width="18" stroke-opacity="0.28" stroke-linejoin="round"/>
+  <path d="M 322 700 L 322 520 A 190 190 0 0 1 702 520 L 702 700 Q 678.3 746 654.5 700 Q 630.8 654 607 700 Q 583.3 746 559.5 700 Q 535.8 654 512 700 Q 488.3 746 464.5 700 Q 440.8 654 417 700 Q 393.3 746 369.5 700 Q 345.8 654 322 700 Z" fill="url(#body)"/>
+  <path d="M 475.4 459.3 A 96 96 0 0 1 491.8 454.2 L 495.5 425.1 A 124 124 0 0 1 528.5 425.1 L 532.2 454.2 A 96 96 0 0 1 548.7 459.3 L 548.8 459.3 A 96 96 0 0 1 564.1 467.4 L 587.2 449.4 A 124 124 0 0 1 610.6 472.8 L 592.6 495.9 A 96 96 0 0 1 600.7 511.3 L 600.7 511.4 A 96 96 0 0 1 605.8 527.8 L 634.9 531.5 A 124 124 0 0 1 634.9 564.5 L 605.8 568.2 A 96 96 0 0 1 600.7 584.7 L 600.7 584.8 A 96 96 0 0 1 592.6 600.1 L 610.6 623.2 A 124 124 0 0 1 587.2 646.6 L 564.1 628.6 A 96 96 0 0 1 548.7 636.7 L 548.6 636.7 A 96 96 0 0 1 532.2 641.8 L 528.5 670.9 A 124 124 0 0 1 495.5 670.9 L 491.8 641.8 A 96 96 0 0 1 475.3 636.7 L 475.2 636.7 A 96 96 0 0 1 459.9 628.6 L 436.8 646.6 A 124 124 0 0 1 413.4 623.2 L 431.4 600.1 A 96 96 0 0 1 423.3 584.7 L 423.3 584.6 A 96 96 0 0 1 418.2 568.2 L 389.1 564.5 A 124 124 0 0 1 389.1 531.5 L 418.2 527.8 A 96 96 0 0 1 423.3 511.3 L 423.3 511.2 A 96 96 0 0 1 431.4 495.9 L 413.4 472.8 A 124 124 0 0 1 436.8 449.4 L 459.9 467.4 A 96 96 0 0 1 475.3 459.3 Z M 468 548 a 44 44 0 1 0 88 0 a 44 44 0 1 0 -88 0 Z" fill="#3551f3" fill-rule="evenodd"/>
+</svg>
