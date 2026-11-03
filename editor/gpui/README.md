@@ -65,8 +65,10 @@ symbol table: ~17 MB per app instead of ~30 MB, same startup; a clean build take
 and writes `gpui/target/macos/Rio Settings.app`,
 `Ghostty Settings.app` and a zip of the two. The bundles open from Finder like any app (a bare
 executable opens a Terminal window), with their name in the menu bar and their icon in the Dock.
-They're ad-hoc signed only, so on another Mac run `xattr -cr "Rio Settings.app"` once (or
-right-click → Open). To open a bundle on a copy: `open "Rio Settings.app" --args --config <copy>`.
+They're ad-hoc signed only (not notarized), so on another Mac Gatekeeper blocks the first launch:
+click Done, then System Settings → Privacy & Security → Open Anyway, or run
+`xattr -dr com.apple.quarantine "Rio Settings.app"` once. Right-click → Open no longer works on
+macOS 15 and later. To open a bundle on a copy: `open "Rio Settings.app" --args --config <copy>`.
 
 ## Test
 

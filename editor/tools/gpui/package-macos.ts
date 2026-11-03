@@ -10,8 +10,9 @@
 //       [--version <x.y.z>] [--out <dir>]
 //       → wraps one other executable the same way (e.g. a Tauri build without its bundler)
 //
-// Bundles are ad-hoc signed only. Copied to another Mac they need `xattr -cr <App>.app` once (or
-// right-click → Open) before Gatekeeper lets them start.
+// Bundles are ad-hoc signed only (not notarized). Copied to another Mac, Gatekeeper blocks the
+// first launch until `xattr -dr com.apple.quarantine <App>.app`, or System Settings → Privacy &
+// Security → Open Anyway (right-click → Open no longer works on macOS 15 and later).
 //
 // Requires cargo and the macOS tools sips, iconutil, codesign and ditto.
 
