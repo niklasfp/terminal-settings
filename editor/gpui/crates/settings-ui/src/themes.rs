@@ -31,6 +31,44 @@ impl SettingsWindow {
         .detach();
     }
 
+    /// Loads suggestion lists (e.g. Ghostty's keybind actions) in the background.
+    pub(crate) fn load_lists(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lists) = self.app.lists else { return };
+        let mut names: Vec<String> = self
+            .editor
+            .schema
+            .settings
+            .iter()
+            .flat_map(|s| s.fields.iter().flatten())
+            .filter_map(|f| f.list.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        if names.is_empty() {
+            return;
+        }
+        let task = cx.background_executor().spawn(async move {
+            names
+                .into_iter()
+                .map(|name| {
+                    let items: Vec<SharedString> = lists(&name).into_iter().map(SharedString::from).collect();
+                    (name, items)
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = task.await;
+            this.update_in(cx, |this, _, cx| {
+                for (name, items) in loaded {
+                    this.lists.insert(name, Rc::new(items));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Makes any theme download still running for `key` stale: a later choice, a clear or a reset
     /// wins over it. Returns the new request's number.
     pub(crate) fn supersede_theme_request(&mut self, key: &str) -> u64 {

@@ -1,5 +1,5 @@
 //! What every terminal's schema merge shares: diagnostics, the merged-once cache, label
-//! humanizing and the lenient JSON accessors (they mirror the .NET generator's MiniJson).
+//! humanizing and the lenient JSON accessors.
 
 use crate::Schema;
 use serde_json::{Map, Value};

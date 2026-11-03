@@ -1,31 +1,6 @@
 version: 2
 
 updates:
-  - package-ecosystem: nuget
-    directory: /editor
-    schedule:
-      interval: weekly
-    ignore:
-      # Source generators must not reference a Roslyn newer than the oldest supported SDK's compiler
-      # (see Directory.Packages.props): only take patch fixes automatically, bump on purpose otherwise.
-      - dependency-name: "Microsoft.CodeAnalysis.*"
-        update-types: ["version-update:semver-minor", "version-update:semver-major"]
-    groups:
-      # Majors stay out of every group, so each one gets its own PR.
-      test:
-        patterns:
-          - "TUnit*"
-          - "Microsoft.Testing.*"
-        update-types: [minor, patch]
-      roslyn:
-        patterns:
-          - "Microsoft.CodeAnalysis.*"
-        update-types: [minor, patch]
-      minor-and-patch:
-        patterns:
-          - "*"
-        update-types: [minor, patch]
-
   - package-ecosystem: github-actions
     # The workflows and the local composite actions they share.
     directories: ["/", "/.github/actions/*"]

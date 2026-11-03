@@ -22,127 +22,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-
 jobs:
-  # On a PR, only the side that can be affected builds: .NET (editor/src, editor/tests, its build
-  # files) and/or the GPUI port (editor/gpui). Both read editor/schema and editor/brand, and this
-  # file affects both. Pushes to main build everything. Jobs skipped by an `if` count as passed
-  # for required status checks.
-  changes:
-    name: Detect changes
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    outputs:
-      dotnet: ${{ steps.filter.outputs.dotnet }}
-      gpui: ${{ steps.filter.outputs.gpui }}
-    steps:
-      - name: Pick the builds the changed files need
-        id: filter
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          if [[ "$EVENT" != "pull_request" ]]; then
-            echo "Not a pull request: build everything."
-            { echo "dotnet=true"; echo "gpui=true"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
-          echo "$files"
-          shared='^(editor/schema/|editor/brand/|\.github/workflows/ci\.yml$)'
-          dotnet='^(editor/src/|editor/tests/|editor/(Directory\.Build\.props|Directory\.Packages\.props|TerminalSettings\.slnx|global\.json)$)'
-          gpui='^(editor/gpui/|\.github/actions/setup-gpui/)'
-          any() { grep -qE "$1" <<<"$files" && echo true || echo false; }
-          d=$(any "$dotnet|$shared"); g=$(any "$gpui|$shared")
-          { echo "dotnet=$d"; echo "gpui=$g"; } >> "$GITHUB_OUTPUT"
-          echo "### Builds: .NET $d, GPUI $g" >> "$GITHUB_STEP_SUMMARY"
-
   test:
-    name: Build and test (${{ matrix.os }})
-    needs: changes
-    if: needs.changes.outputs.dotnet == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: editor
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Build
-        run: dotnet build TerminalSettings.slnx -c Release
-
-      # Never pass --nologo here: on .NET 10 Microsoft.Testing.Platform it makes the run execute zero tests.
-      - name: Test
-        run: dotnet test --solution TerminalSettings.slnx -c Release --no-build
-
-  aot:
-    name: AOT publish ${{ matrix.app }} (${{ matrix.rid }})
-    needs: changes
-    if: needs.changes.outputs.dotnet == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { app: rio-settings, project: RioSettings, os: ubuntu-latest, rid: linux-x64 }
-          - { app: rio-settings, project: RioSettings, os: macos-latest, rid: osx-arm64 }
-          - { app: rio-settings, project: RioSettings, os: windows-latest, rid: win-x64 }
-          - { app: ghostty-settings, project: GhosttySettings, os: ubuntu-latest, rid: linux-x64 }
-          - { app: ghostty-settings, project: GhosttySettings, os: macos-latest, rid: osx-arm64 }
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: editor
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Publish (Native AOT)
-        run: >
-          dotnet publish src/${{ matrix.project }}/${{ matrix.project }}.csproj
-          -c Release -r ${{ matrix.rid }} -o "$RUNNER_TEMP/publish"
-          -p:Version=0.0.0-ci
-
-      - name: Smoke test
-        env:
-          APP: ${{ matrix.app }}
-        run: |
-          exe="$RUNNER_TEMP/publish/$APP"
-          [[ "$RUNNER_OS" == "Windows" ]] && exe="$exe.exe"
-          ls -l "$RUNNER_TEMP/publish"
-          # --version must exit 0 (the step fails otherwise) and print the stamped version.
-          out="$("$exe" --version)"
-          echo "$out"
-          [[ "$out" == *"0.0.0-ci"* ]] || { echo "::error::$APP --version did not report 0.0.0-ci"; exit 1; }
-
-  # ---- The native GPUI Kit port (editor/gpui) ----
-
-  gpui-test:
-    name: GPUI lint and test (${{ matrix.os }})
-    needs: changes
-    if: needs.changes.outputs.gpui == 'true'
+    name: Lint and test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -169,14 +51,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
-  gpui-build:
-    name: GPUI release build ${{ matrix.app }} (${{ matrix.rid }})
-    needs: changes
-    if: needs.changes.outputs.gpui == 'true'
+  build:
+    name: Release build ${{ matrix.app }} (${{ matrix.rid }})
     strategy:
       fail-fast: false
       matrix:
-        # The same apps and platforms as the Native AOT job above.
         include:
           - { app: rio-settings, os: ubuntu-latest, rid: linux-x64 }
           - { app: rio-settings, os: macos-latest, rid: osx-arm64 }

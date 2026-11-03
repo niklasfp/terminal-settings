@@ -122,6 +122,43 @@ pub enum Cell {
     Font(Chooser<FontItem>),
 }
 
+/// An open suggestion list under a table cell (`Field::list`, e.g. Ghostty's keybind actions).
+#[derive(Clone)]
+pub(crate) struct SuggestState {
+    pub input: Entity<InputState>,
+    pub key: String,
+    pub list: String,
+    pub selected: usize,
+}
+
+const MAX_SUGGESTIONS: usize = 8;
+
+/// Matches from `items` for a typed query: prefix matches first, then substring matches.
+/// Empty when nothing is typed yet, after `:`, or when the single match is already the text.
+pub fn filter_suggestions(items: &[SharedString], raw: &str) -> Vec<SharedString> {
+    let trimmed = raw.trim();
+    let q = trimmed.to_lowercase();
+    if q.is_empty() || q.contains(':') {
+        return Vec::new();
+    }
+    let mut prefix = Vec::new();
+    let mut rest = Vec::new();
+    for item in items {
+        let lower = item.to_lowercase();
+        if lower.starts_with(&q) {
+            prefix.push(item.clone());
+        } else if lower.contains(&q) {
+            rest.push(item.clone());
+        }
+    }
+    prefix.extend(rest);
+    prefix.truncate(MAX_SUGGESTIONS);
+    if prefix.len() == 1 && prefix[0].eq_ignore_ascii_case(trimmed) {
+        return Vec::new();
+    }
+    prefix
+}
+
 impl Cell {
     fn text(&self, cx: &App) -> String {
         match self {
@@ -490,11 +527,35 @@ impl SettingsWindow {
             }
             let ph = f.placeholder.clone().unwrap_or_default();
             let input = cx.new(|cx| InputState::new(window, cx).placeholder(ph).default_value(initial));
-            subs.push(cx.subscribe_in(&input, window, move |this, _, ev: &InputEvent, window, cx| {
-                if matches!(ev, InputEvent::Change) {
-                    this.on_input(&key, window, cx);
-                }
-            }));
+            if let Some(list) = f.list.clone() {
+                subs.push(cx.subscribe_in(&input, window, move |this, input, ev: &InputEvent, window, cx| {
+                    match ev {
+                        InputEvent::Change => {
+                            this.suggest = Some(SuggestState {
+                                input: input.clone(),
+                                key: key.clone(),
+                                list: list.clone(),
+                                selected: 0,
+                            });
+                            this.on_input(&key, window, cx);
+                        }
+                        InputEvent::PressEnter { .. } => this.accept_suggestion(input, window, cx),
+                        InputEvent::Blur => {
+                            if this.suggest.as_ref().is_some_and(|s| &s.input == input) {
+                                this.suggest = None;
+                                cx.notify();
+                            }
+                        }
+                        InputEvent::Focus => {}
+                    }
+                }));
+            } else {
+                subs.push(cx.subscribe_in(&input, window, move |this, _, ev: &InputEvent, window, cx| {
+                    if matches!(ev, InputEvent::Change) {
+                        this.on_input(&key, window, cx);
+                    }
+                }));
+            }
             cells.push(Cell::Text(input));
         }
         let known: Vec<&str> = s.fields.iter().flatten().map(|f| f.key.as_str()).collect();
@@ -503,6 +564,36 @@ impl SettingsWindow {
             .map(|m| m.iter().filter(|(k, _)| !known.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
         RecordRow { id: self.next_row_id, cells, extra, _subs: subs }
+    }
+
+    fn suggestions_for(&self, input: &Entity<InputState>, list: &str, cx: &App) -> Vec<SharedString> {
+        let Some(items) = self.lists.get(list) else {
+            return Vec::new();
+        };
+        filter_suggestions(items, &input.read(cx).value())
+    }
+
+    fn accept_suggestion(&mut self, input: &Entity<InputState>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.suggest.as_ref().filter(|s| &s.input == input).cloned() else { return };
+        let matches = self.suggestions_for(input, &state.list, cx);
+        let Some(chosen) = matches.get(state.selected.min(matches.len().saturating_sub(1))).cloned() else {
+            self.suggest = None;
+            return;
+        };
+        self.pick_suggestion(input, &state.key, &chosen, window, cx);
+    }
+
+    fn pick_suggestion(
+        &mut self,
+        input: &Entity<InputState>,
+        key: &str,
+        chosen: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.suggest = None;
+        input.update(cx, |s, cx| s.set_value(chosen.to_string(), window, cx));
+        self.on_input(key, window, cx);
     }
 
     fn add_record(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -833,7 +924,13 @@ impl SettingsWindow {
                             .children(fields.iter().zip(&row.cells).map(|(f, cell)| {
                                 let cell_id = id(&format!("{row_ix}:{}", f.key));
                                 let widget = match cell {
-                                    Cell::Text(input) => Input::new(input).id(cell_id).small().disabled(disabled).into_any_element(),
+                                    Cell::Text(input) => {
+                                        let field = Input::new(input).id(cell_id).small().disabled(disabled);
+                                        match &f.list {
+                                            Some(list) if !disabled => self.render_suggest_cell(s, row_ix, f, input, list, field, cx),
+                                            _ => field.into_any_element(),
+                                        }
+                                    }
                                     Cell::Font(chooser) => div()
                                         .id(cell_id)
                                         .test_support()
@@ -877,13 +974,124 @@ impl SettingsWindow {
             _ => div().into_any_element(),
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_suggest_cell(
+        &self,
+        s: &'static Setting,
+        row_ix: usize,
+        f: &settings_core::Field,
+        input: &Entity<InputState>,
+        list: &str,
+        field: Input,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use gpui_kit::component::input::{Escape, MoveDown, MoveUp};
+
+        let active = self.suggest.as_ref().filter(|st| &st.input == input);
+        let matches = active.map(|_| self.suggestions_for(input, list, cx)).unwrap_or_default();
+        if matches.is_empty() {
+            return field.into_any_element();
+        }
+        let n = matches.len();
+        let selected = active.map_or(0, |st| st.selected.min(n - 1));
+        let theme = cx.theme().clone();
+        let popup_id = ElementId::Name(format!("{}:{row_ix}:{}:suggestions", s.key, f.key).into());
+        let popup = v_flex()
+            .id(popup_id)
+            .test_support()
+            .occlude()
+            .mt_1()
+            .min_w_56()
+            .p_1()
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .text_color(theme.popover_foreground)
+            .shadow_md()
+            .children(matches.into_iter().enumerate().map(|(ix, item)| {
+                let item_id = ElementId::Name(format!("{}:{row_ix}:{}:suggest:{item}", s.key, f.key).into());
+                let is_selected = ix == selected;
+                let input = input.clone();
+                let key = s.key.clone();
+                let choice = item.to_string();
+                div()
+                    .id(item_id)
+                    .test_support()
+                    .px_2()
+                    .py_1()
+                    .rounded(theme.radius)
+                    .text_sm()
+                    .font_family(theme.mono_font_family.clone())
+                    .cursor_pointer()
+                    .when(is_selected, |d| d.bg(theme.accent).text_color(theme.accent_foreground))
+                    .hover(|d| d.bg(theme.accent).text_color(theme.accent_foreground))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.pick_suggestion(&input, &key, &choice, window, cx);
+                        }),
+                    )
+                    .child(item)
+            }));
+
+        v_flex()
+            .w_full()
+            .capture_action(cx.listener(move |this, _: &MoveDown, _, cx| {
+                if let Some(st) = &mut this.suggest {
+                    st.selected = (selected + 1) % n;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .capture_action(cx.listener(move |this, _: &MoveUp, _, cx| {
+                if let Some(st) = &mut this.suggest {
+                    st.selected = (selected + n - 1) % n;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Escape, _, cx| {
+                if this.suggest.is_some() {
+                    this.suggest = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .child(field)
+            .child(
+                div().h_0().child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    )
+                    .with_priority(1),
+                ),
+            )
+            .into_any_element()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that brings in GPUI's `test` attribute, which shadows the standard one.
-    use super::{humanize, is_segmented, margin_compress, margin_expand, parse_hex, round_to_step, to_hex, value_label};
+    use super::{filter_suggestions, humanize, is_segmented, margin_compress, margin_expand, parse_hex, round_to_step, to_hex, value_label};
+    use gpui_kit::SharedString;
     use serde_json::json;
+
+    #[test]
+    fn suggestions_rank_prefixes_first_and_hide_when_complete() {
+        let items: Vec<SharedString> = ["close_tab", "new_tab", "new_window", "goto_split"].into_iter().map(Into::into).collect();
+        assert!(filter_suggestions(&items, "").is_empty());
+        assert_eq!(filter_suggestions(&items, "new"), ["new_tab", "new_window"]);
+        assert_eq!(filter_suggestions(&items, "tab"), ["close_tab", "new_tab"]);
+        assert!(filter_suggestions(&items, "new_tab").is_empty(), "already exact");
+        assert!(filter_suggestions(&items, "goto_split:left").is_empty(), "has argument");
+    }
 
     #[test]
     fn margins_compress_css_style() {

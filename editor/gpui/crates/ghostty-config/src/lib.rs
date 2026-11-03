@@ -62,23 +62,33 @@ pub fn ghostty_binary() -> Option<PathBuf> {
     process::ghostty_binary()
 }
 
-/// Ghostty reads config.ghostty (1.2.3+) or the older config, from $XDG_CONFIG_HOME/ghostty.
+/// Matches Ghostty's `preferredDefaultFilePath`: reads `$XDG_CONFIG_HOME/ghostty/config[.ghostty]`
+/// (usually `~/.config/ghostty/…`) and, on macOS, also
+/// `~/Library/Application Support/com.mitchellh.ghostty/config[.ghostty]` (loaded later, so it
+/// wins when non-empty). Zero-byte files are treated as missing, matching Ghostty's loader.
 fn default_config_path() -> PathBuf {
-    let base = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+    let home = std::env::home_dir().unwrap_or_default();
+    let xdg_base = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
         Some(xdg) => PathBuf::from(xdg),
-        None => std::env::home_dir().unwrap_or_default().join(".config"),
+        None => home.join(".config"),
     };
-    config_in(&base.join("ghostty"))
+    let app_support = cfg!(target_os = "macos")
+        .then(|| home.join("Library").join("Application Support").join("com.mitchellh.ghostty"));
+    choose_config(&xdg_base.join("ghostty"), app_support.as_deref())
 }
 
-fn config_in(dir: &Path) -> PathBuf {
-    let modern = dir.join("config.ghostty");
-    let legacy = dir.join("config");
-    if modern.exists() || !legacy.exists() {
-        modern
-    } else {
-        legacy
-    }
+fn choose_config(xdg: &Path, app_support: Option<&Path>) -> PathBuf {
+    app_support
+        .and_then(existing_in)
+        .or_else(|| existing_in(xdg))
+        .unwrap_or_else(|| app_support.unwrap_or(xdg).join("config.ghostty"))
+}
+
+fn existing_in(dir: &Path) -> Option<PathBuf> {
+    ["config.ghostty", "config"]
+        .into_iter()
+        .map(|name| dir.join(name))
+        .find(|p| p.metadata().is_ok_and(|m| m.is_file() && m.len() > 0))
 }
 
 /// Suggestion lists from the Ghostty CLI: "actions" and "x11-colors". Empty without Ghostty.
@@ -263,18 +273,38 @@ mod tests {
         assert!(app.install_theme.is_none());
         assert!(app.validate.is_some() && app.lists.is_some() && app.themes.is_some());
         let path = (app.default_config_path)();
-        assert!(path.ends_with("ghostty/config.ghostty") || path.ends_with("ghostty/config"));
+        assert!(path.ends_with("config.ghostty") || path.ends_with("config"));
         assert!((app.lists.unwrap())("no-such-list").is_empty());
     }
 
     #[test]
-    fn modern_config_name_wins_unless_only_the_legacy_one_exists() {
+    fn default_config_checks_macos_application_support_and_xdg() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(config_in(dir.path()), dir.path().join("config.ghostty"));
-        fs::write(dir.path().join("config"), "").unwrap();
-        assert_eq!(config_in(dir.path()), dir.path().join("config"));
-        fs::write(dir.path().join("config.ghostty"), "").unwrap();
-        assert_eq!(config_in(dir.path()), dir.path().join("config.ghostty"));
+        let xdg = dir.path().join("xdg");
+        let app_support = dir.path().join("app-support");
+        fs::create_dir_all(&xdg).unwrap();
+        fs::create_dir_all(&app_support).unwrap();
+
+        // Nothing on disk yet: matches Ghostty's preferredDefaultFilePath (Application Support on
+        // macOS, XDG on Linux).
+        assert_eq!(choose_config(&xdg, Some(&app_support)), app_support.join("config.ghostty"));
+        assert_eq!(choose_config(&xdg, None), xdg.join("config.ghostty"));
+
+        // Zero-byte files are skipped like in Ghostty's loader.
+        fs::write(xdg.join("config"), "font-size = 14\n").unwrap();
+        fs::write(xdg.join("config.ghostty"), "").unwrap();
+        fs::write(app_support.join("config.ghostty"), "").unwrap();
+        assert_eq!(choose_config(&xdg, Some(&app_support)), xdg.join("config"));
+
+        fs::write(xdg.join("config.ghostty"), "font-size = 15\n").unwrap();
+        assert_eq!(choose_config(&xdg, Some(&app_support)), xdg.join("config.ghostty"));
+
+        // Ghostty loads Application Support after XDG on macOS, so it wins when non-empty.
+        fs::write(app_support.join("config"), "font-size = 16\n").unwrap();
+        assert_eq!(choose_config(&xdg, Some(&app_support)), app_support.join("config"));
+        assert_eq!(choose_config(&xdg, None), xdg.join("config.ghostty"));
+        fs::write(app_support.join("config.ghostty"), "font-size = 17\n").unwrap();
+        assert_eq!(choose_config(&xdg, Some(&app_support)), app_support.join("config.ghostty"));
     }
 
     #[test]

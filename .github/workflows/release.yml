@@ -1,10 +1,9 @@
 name: Release
 
 # Pushing a tag `<app>/v<semver>` (e.g. `git tag rio-settings/v1.2.3 && git push origin rio-settings/v1.2.3`)
-# builds that app with Native AOT for every target it ships on, and the native GPUI Kit port
-# (editor/gpui) for the same targets (assets named <app>-gpui-<version>-<rid>.*; a zipped .app on
-# macOS), creates the GitHub release as a draft with the executables, archives and SHA256SUMS
-# attached, and then publishes it.
+# builds that app for every target it ships on (assets named <app>-<version>-<rid>.*; a zipped .app
+# on macOS, .tar.gz on Linux, .zip on Windows), creates the GitHub release as a draft with the
+# archives and SHA256SUMS attached, and then publishes it.
 # The repo uses immutable releases: a published release is locked, so assets must be attached
 # while it is still a draft.
 #
@@ -34,11 +33,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-
 jobs:
   prepare:
     name: Parse tag
@@ -67,17 +61,17 @@ jobs:
           case "$app" in
             rio-settings)
               matrix='{"include":[
-                {"project":"RioSettings","rid":"osx-arm64","os":"macos-latest"},
-                {"project":"RioSettings","rid":"linux-x64","os":"ubuntu-latest"},
-                {"project":"RioSettings","rid":"linux-arm64","os":"ubuntu-24.04-arm"},
-                {"project":"RioSettings","rid":"win-x64","os":"windows-latest"},
-                {"project":"RioSettings","rid":"win-arm64","os":"windows-11-arm"}]}' ;;
+                {"rid":"osx-arm64","os":"macos-latest"},
+                {"rid":"linux-x64","os":"ubuntu-latest"},
+                {"rid":"linux-arm64","os":"ubuntu-24.04-arm"},
+                {"rid":"win-x64","os":"windows-latest"},
+                {"rid":"win-arm64","os":"windows-11-arm"}]}' ;;
             ghostty-settings)
               # Ghostty has no Windows version, so neither does its editor.
               matrix='{"include":[
-                {"project":"GhosttySettings","rid":"osx-arm64","os":"macos-latest"},
-                {"project":"GhosttySettings","rid":"linux-x64","os":"ubuntu-latest"},
-                {"project":"GhosttySettings","rid":"linux-arm64","os":"ubuntu-24.04-arm"}]}' ;;
+                {"rid":"osx-arm64","os":"macos-latest"},
+                {"rid":"linux-x64","os":"ubuntu-latest"},
+                {"rid":"linux-arm64","os":"ubuntu-24.04-arm"}]}' ;;
           esac
 
           dry_run=false
@@ -92,78 +86,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "### $app $version (dry run: $dry_run)" >> "$GITHUB_STEP_SUMMARY"
 
+  # Every target builds natively on its own runner.
   build:
     name: ${{ needs.prepare.outputs.app }} ${{ matrix.rid }}
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
-    env:
-      APP: ${{ needs.prepare.outputs.app }}
-      VERSION: ${{ needs.prepare.outputs.version }}
-      RID: ${{ matrix.rid }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # A tag push builds the tagged commit; a dry run builds the ref it was dispatched on.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Publish (Native AOT)
-        working-directory: editor
-        run: >
-          dotnet publish src/${{ matrix.project }}/${{ matrix.project }}.csproj
-          -c Release -r "$RID" -o "$RUNNER_TEMP/publish"
-          -p:Version="$VERSION"
-
-      - name: Check the executable reports the version
-        run: |
-          ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=".exe"
-          # --version must exit 0 (the step fails otherwise) and print the stamped version.
-          out="$("$RUNNER_TEMP/publish/$APP$ext" --version)"
-          echo "$out"
-          [[ "$out" == *"$VERSION"* ]] || { echo "::error::$APP --version printed '$out', expected $VERSION"; exit 1; }
-
-      - name: Package
-        run: |
-          ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=".exe"
-          name="$APP-$VERSION-$RID"
-          dist="$RUNNER_TEMP/dist"
-          stage="$RUNNER_TEMP/stage/$name"
-          mkdir -p "$dist" "$stage"
-
-          # Only the executable ships: no .dSYM/.pdb symbols.
-          cp "$RUNNER_TEMP/publish/$APP$ext" "$dist/$name$ext"
-          cp "$RUNNER_TEMP/publish/$APP$ext" "$stage/$APP$ext"
-          for doc in README.md LICENSE THIRD-PARTY-NOTICES.md; do
-            [[ -f "$doc" ]] && cp "$doc" "$stage/"
-          done
-
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            pwsh -NoProfile -Command "Compress-Archive -Path '$(cygpath -w "$stage")' -DestinationPath '$(cygpath -w "$dist/$name.zip")'"
-          else
-            chmod +x "$dist/$name" "$stage/$APP"
-            tar -C "$RUNNER_TEMP/stage" -czf "$dist/$name.tar.gz" "$name"
-          fi
-          ls -l "$dist"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ env.APP }}-${{ env.VERSION }}-${{ matrix.rid }}
-          path: ${{ runner.temp }}/dist/
-          if-no-files-found: error
-
-  # The native GPUI Kit port (editor/gpui), for the same targets, released next to the .NET build
-  # as <app>-gpui-<version>-<rid>.*. Every target builds natively on its own runner.
-  build-gpui:
-    name: ${{ needs.prepare.outputs.app }} ${{ matrix.rid }} (GPUI)
     needs: prepare
     strategy:
       fail-fast: false
@@ -179,6 +104,7 @@ jobs:
       run:
         shell: bash
     steps:
+      # A tag push builds the tagged commit; a dry run builds the ref it was dispatched on.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -214,7 +140,7 @@ jobs:
       - name: Package
         run: |
           ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=".exe"
-          name="$APP-gpui-$VERSION-$RID"
+          name="$APP-$VERSION-$RID"
           dist="$RUNNER_TEMP/dist"
           stage="$RUNNER_TEMP/stage/$name"
           mkdir -p "$dist" "$stage"
@@ -236,16 +162,15 @@ jobs:
           fi
           ls -l "$dist"
 
-      # Named so the publish job's <app>-<version>-* pattern picks it up with the .NET assets.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.APP }}-${{ env.VERSION }}-${{ matrix.rid }}-gpui
+          name: ${{ env.APP }}-${{ env.VERSION }}-${{ matrix.rid }}
           path: ${{ runner.temp }}/dist/
           if-no-files-found: error
 
   publish:
     name: ${{ needs.prepare.outputs.dry_run == 'true' && 'Collect assets (dry run)' || 'Publish release' }}
-    needs: [prepare, build, build-gpui]
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
