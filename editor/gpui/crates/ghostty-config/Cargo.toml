@@ -1,0 +1,12 @@
+[package]
+name = "ghostty-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+settings-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

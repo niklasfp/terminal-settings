@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="frame" x1="512" x2="512" y1="100" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb43fe"/>
+      <stop offset=".484" stop-color="#cf91f6"/>
+      <stop offset=".813" stop-color="#73c9ea"/>
+      <stop offset="1" stop-color="#00dbe5"/>
+    </linearGradient>
+    <linearGradient id="fill0" x1="262" x2="556" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb43fe"/><stop offset="1" stop-color="#cf91f6"/>
+    </linearGradient>
+    <linearGradient id="fill1" x1="262" x2="336" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#cf91f6"/><stop offset="1" stop-color="#73c9ea"/>
+    </linearGradient>
+    <linearGradient id="fill2" x1="262" x2="488" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#73c9ea"/><stop offset="1" stop-color="#00dbe5"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#frame)"/>
+  <rect x="174" y="174" width="676" height="676" rx="128" fill="#000"/>
+  <line x1="724" y1="352" x2="762" y2="352" stroke="#3f3f46" stroke-width="30" stroke-linecap="round"/>
+  <line x1="262" y1="352" x2="556" y2="352" stroke="url(#fill0)" stroke-width="30" stroke-linecap="round"/>
+  <path d="M 640 352 L 702 374.6 A 66 66 0 1 1 688.4 307.1 Z" fill="#fefefe"/>
+  <line x1="504" y1="512" x2="762" y2="512" stroke="#3f3f46" stroke-width="30" stroke-linecap="round"/>
+  <line x1="262" y1="512" x2="336" y2="512" stroke="url(#fill1)" stroke-width="30" stroke-linecap="round"/>
+  <path d="M 420 512 L 482 534.6 A 66 66 0 1 1 468.4 467.1 Z" fill="#fefefe"/>
+  <line x1="656" y1="672" x2="762" y2="672" stroke="#3f3f46" stroke-width="30" stroke-linecap="round"/>
+  <line x1="262" y1="672" x2="488" y2="672" stroke="url(#fill2)" stroke-width="30" stroke-linecap="round"/>
+  <path d="M 572 672 L 634 694.6 A 66 66 0 1 1 620.4 627.1 Z" fill="#fefefe"/>
+</svg>

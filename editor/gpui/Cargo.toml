@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/settings-core",
+    "crates/settings-ui",
+    "crates/rio-config",
+    "crates/ghostty-config",
+    "apps/rio-settings",
+    "apps/ghostty-settings",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+settings-core = { path = "crates/settings-core" }
+settings-ui = { path = "crates/settings-ui" }
+rio-config = { path = "crates/rio-config" }
+ghostty-config = { path = "crates/ghostty-config" }
+gpui-kit = "0.9.0"
+serde_json = { version = "1", features = ["preserve_order"] }
+# toml_edit 0.25 parses TOML 1.1 (spec-1.1.0), like current Rio's `toml`. The editor only emits TOML 1.0.
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
+sha2 = "0.10"
+# TLS features are picked per platform in crates/rio-config.
+ureq = { version = "3", default-features = false }
+tempfile = "3"
+# Windows app icon resource (apps/app-build.rs). GPUI uses the same crate for its manifest.
+embed-resource = "3"
+
+# What the packaged apps ship (tools/gpui/package-macos.ts): whole-program optimisation, one code
+# unit and no symbol table take each binary from ~30 MB to ~17 MB with the same startup time. Kept
+# out of `release` because it makes every rebuild re-link everything (~3 min instead of ~4 s).
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true

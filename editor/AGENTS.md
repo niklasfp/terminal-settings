@@ -20,6 +20,8 @@ Guidance for coding agents working in this repo. See README.md for what the apps
 - `schema/<terminal>/<terminal>-overlay.json`: the hand-written layer (groups, ranges, widgets,
   labels where needed).
 - `tests/<App>.Tests`: TUnit (Microsoft.Testing.Platform, see `global.json`), one project per app.
+- `gpui/`: the native Rust port of both apps on GPUI Kit. It has its own rules in
+  [gpui/AGENTS.md](gpui/AGENTS.md).
 
 ## Standing rules
 

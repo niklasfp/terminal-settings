@@ -96,3 +96,77 @@ jobs:
           out="$("$exe" --version)"
           echo "$out"
           [[ "$out" == *"0.0.0-ci"* ]] || { echo "::error::$APP --version did not report 0.0.0-ci"; exit 1; }
+
+  # ---- The native GPUI Kit port (editor/gpui) ----
+
+  gpui-test:
+    name: GPUI lint and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: editor/gpui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-gpui
+        with:
+          cache-key: test
+          components: clippy
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The UI tests drive the real window headlessly, so they run on every OS.
+      - name: Test
+        run: cargo test --workspace --locked
+
+  gpui-build:
+    name: GPUI release build ${{ matrix.app }} (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The same apps and platforms as the Native AOT job above.
+        include:
+          - { app: rio-settings, os: ubuntu-latest, rid: linux-x64 }
+          - { app: rio-settings, os: macos-latest, rid: osx-arm64 }
+          - { app: rio-settings, os: windows-latest, rid: win-x64 }
+          - { app: ghostty-settings, os: ubuntu-latest, rid: linux-x64 }
+          - { app: ghostty-settings, os: macos-latest, rid: osx-arm64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: editor/gpui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-gpui
+        with:
+          cache-key: release-${{ matrix.app }}
+
+      - name: Build
+        env:
+          APP: ${{ matrix.app }}
+          SETTINGS_VERSION: 0.0.0-ci
+        run: cargo build --release --locked -p "$APP"
+
+      - name: Smoke test
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          exe="target/release/$APP"
+          [[ "$RUNNER_OS" == "Windows" ]] && exe="$exe.exe"
+          ls -l "$exe"
+          # --version must exit 0 (the step fails otherwise) and print the stamped version.
+          out="$("$exe" --version)"
+          echo "$out"
+          [[ "$out" == *"0.0.0-ci"* ]] || { echo "::error::$APP --version did not report 0.0.0-ci"; exit 1; }

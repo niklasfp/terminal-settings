@@ -1,0 +1,60 @@
+name: Set up the GPUI build
+description: >
+  Rust stable (installed if the runner image has no rustup, as on some Arm images), the Linux
+  libraries GPUI links against, and a build cache for editor/gpui.
+
+inputs:
+  cache-key:
+    description: What this job builds (e.g. "test", "release-rio-settings"), so jobs don't share a cache.
+    required: true
+  components:
+    description: Extra rustup components, space-separated (e.g. "clippy").
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        if ! command -v rustup > /dev/null; then
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            arch=$([[ "$RUNNER_ARCH" == "ARM64" ]] && echo aarch64 || echo x86_64)
+            curl -sSfLo "$RUNNER_TEMP/rustup-init.exe" "https://static.rust-lang.org/rustup/dist/$arch-pc-windows-msvc/rustup-init.exe"
+            "$RUNNER_TEMP/rustup-init.exe" -y --profile minimal --default-toolchain none
+            echo "$USERPROFILE\\.cargo\\bin" >> "$GITHUB_PATH"
+            # This shell needs the POSIX form: "C:\…" would split bash's PATH at the colon.
+            PATH="$(cygpath -u "$USERPROFILE")/.cargo/bin:$PATH"
+            export PATH
+          else
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+        fi
+        # shellcheck disable=SC2086 # COMPONENTS is a space-separated list on purpose.
+        rustup toolchain install stable --profile minimal ${COMPONENTS:+--component $COMPONENTS}
+        rustup default stable
+        rustc --version
+
+    - name: Install GPUI's Linux libraries
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends \
+          pkg-config libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev \
+          libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libvulkan-dev libzstd-dev libssl-dev
+
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          editor/gpui/target/
+        key: gpui-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('editor/gpui/Cargo.lock') }}
+        restore-keys: gpui-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-

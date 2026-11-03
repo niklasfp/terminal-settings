@@ -1,0 +1,22 @@
+[package]
+name = "rio-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+settings-core.workspace = true
+serde_json.workspace = true
+toml_edit.workspace = true
+
+# TLS for theme downloads. macOS and Windows use the system's own TLS and certificate store
+# (`ring`, rustls' crypto, needs clang to build for Windows on Arm). Linux uses rustls, so the
+# binary doesn't depend on the distro's OpenSSL.
+[target.'cfg(target_os = "linux")'.dependencies]
+ureq = { workspace = true, features = ["rustls"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+ureq = { workspace = true, features = ["native-tls-no-default"] }
+
+[dev-dependencies]
+tempfile.workspace = true
