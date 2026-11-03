@@ -31,6 +31,11 @@ fn open_with(cx: &mut TestAppContext, app: AppDefinition, file: &str, config: &s
 
 /// Like `open_with`, with more files next to the config (e.g. "themes/Mine.toml").
 fn open_with_files(cx: &mut TestAppContext, app: AppDefinition, file: &str, config: &str, files: &[(&str, &str)]) -> Fixture {
+    open_sized(cx, app, file, config, files, 1000.)
+}
+
+/// Like `open_with_files`, in a window `height` px tall (1280 wide).
+fn open_sized(cx: &mut TestAppContext, app: AppDefinition, file: &str, config: &str, files: &[(&str, &str)], height: f32) -> Fixture {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(file);
     std::fs::write(&path, config).expect("write config");
@@ -48,7 +53,7 @@ fn open_with_files(cx: &mut TestAppContext, app: AppDefinition, file: &str, conf
     let (window, view) = cx.update(|cx| {
         gpui_kit::open_window(
             WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::new(Default::default(), size(px(1280.), px(1000.))))),
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(Default::default(), size(px(1280.), px(height))))),
                 ..Default::default()
             },
             cx,
@@ -365,6 +370,18 @@ fn ghostty_list_entries_keep_their_commas(cx: &mut TestAppContext) {
     });
     f.save(cx);
     assert_eq!(read(&f.path), "macos-icon-screen-color = #111111,#222222\n");
+}
+
+#[gpui_kit::test]
+fn on_a_short_window_the_sections_scroll_above_the_footer(cx: &mut TestAppContext) {
+    // 500 px is shorter than the full section list (Rio has 17 sections).
+    let f = open_sized(cx, rio_config::app(), "config.toml", "", &[], 500.);
+    f.ui(cx, |window, _| {
+        let list = window.find("groups-scroll").bounds();
+        let footer = window.find("groups-footer").bounds();
+        assert!(list.bottom() <= footer.top(), "the section list ends above the footer: {list:?} {footer:?}");
+        assert!(footer.bottom() <= px(500.), "the footer stays in the window: {footer:?}");
+    });
 }
 
 #[gpui_kit::test]

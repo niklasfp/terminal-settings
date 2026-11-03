@@ -17,7 +17,7 @@ use gpui_kit::component::{
     notification::Notification,
     scroll::ScrollableElement as _,
     select::{Select, SelectEvent, SelectState},
-    sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
+    sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem},
     tag::Tag,
 };
 use gpui_kit::*;
@@ -654,7 +654,7 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    fn render_sidebar(&self, query: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn render_sidebar(&self, query: &str, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let schema = self.editor.schema;
         let searching = !query.is_empty();
         let theme = cx.theme().clone();
@@ -704,20 +704,46 @@ impl SettingsWindow {
             )
         });
         let revision: String = schema.revision.chars().take(7).collect();
-        Sidebar::new("groups")
+        // Laid out here rather than with GPUI Kit's `Sidebar`: its menu list sizes to the menu, so on
+        // a short window the sections ran over the footer instead of scrolling. Same look: the
+        // theme's sidebar colors and the Sidebar's spacing.
+        let menu = SidebarItem::render(SidebarMenu::new().children(items), "groups-menu", window, cx);
+        v_flex()
+            .id("groups")
             .w_64()
-            .collapsible(false)
-            .header(
-                Input::new(&self.search)
-                    .id("search")
-                    .small()
-                    .prefix(IconName::Search)
-                    .suffix(Kbd::new(Keystroke::parse("/").unwrap_or_default()).outline()),
+            .h_full()
+            .flex_shrink_0()
+            .bg(theme.tokens.sidebar)
+            .text_color(theme.sidebar_foreground)
+            .border_r_1()
+            .border_color(theme.sidebar_border)
+            .child(
+                div().pt_3().px_3().child(
+                    Input::new(&self.search)
+                        .id("search")
+                        .small()
+                        .prefix(IconName::Search)
+                        .suffix(Kbd::new(Keystroke::parse("/").unwrap_or_default()).outline()),
+                ),
             )
-            .child(SidebarMenu::new().children(items))
-            .footer(
+            .child(
+                // The scroll area takes the space between search and footer (and gives its id to its
+                // own scroll layers, hence the wrapper that holds "groups-scroll").
+                div()
+                    .id("groups-scroll")
+                    .test_support()
+                    .flex_1()
+                    .min_h_0()
+                    .child(div().size_full().overflow_y_scrollbar().child(div().p_3().child(menu))),
+            )
+            .child(
                 v_flex()
-                    .px_2()
+                    .id("groups-footer")
+                    .test_support()
+                    .flex_none()
+                    .px_5()
+                    .pb_3()
+                    .pt_1()
                     .gap_0p5()
                     .text_xs()
                     .text_color(theme.muted_foreground)
@@ -991,7 +1017,7 @@ impl Render for SettingsWindow {
         let query = self.query(cx);
         let theme = cx.theme().clone();
         let header = self.render_header(window, cx);
-        let sidebar = self.render_sidebar(&query, cx);
+        let sidebar = self.render_sidebar(&query, window, cx);
         let banner = self.render_banner(cx);
 
         let pages: Vec<AnyElement> = if query.is_empty() {
