@@ -28,8 +28,46 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
+  # On a PR, only the side that can be affected builds: .NET (editor/src, editor/tests, its build
+  # files) and/or the GPUI port (editor/gpui). Both read editor/schema and editor/brand, and this
+  # file affects both. Pushes to main build everything. Jobs skipped by an `if` count as passed
+  # for required status checks.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      dotnet: ${{ steps.filter.outputs.dotnet }}
+      gpui: ${{ steps.filter.outputs.gpui }}
+    steps:
+      - name: Pick the builds the changed files need
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT" != "pull_request" ]]; then
+            echo "Not a pull request: build everything."
+            { echo "dotnet=true"; echo "gpui=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          echo "$files"
+          shared='^(editor/schema/|editor/brand/|\.github/workflows/ci\.yml$)'
+          dotnet='^(editor/src/|editor/tests/|editor/(Directory\.Build\.props|Directory\.Packages\.props|TerminalSettings\.slnx|global\.json)$)'
+          gpui='^(editor/gpui/|\.github/actions/setup-gpui/)'
+          any() { grep -qE "$1" <<<"$files" && echo true || echo false; }
+          d=$(any "$dotnet|$shared"); g=$(any "$gpui|$shared")
+          { echo "dotnet=$d"; echo "gpui=$g"; } >> "$GITHUB_OUTPUT"
+          echo "### Builds: .NET $d, GPUI $g" >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: Build and test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -56,6 +94,8 @@ jobs:
 
   aot:
     name: AOT publish ${{ matrix.app }} (${{ matrix.rid }})
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -101,6 +141,8 @@ jobs:
 
   gpui-test:
     name: GPUI lint and test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.gpui == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -129,6 +171,8 @@ jobs:
 
   gpui-build:
     name: GPUI release build ${{ matrix.app }} (${{ matrix.rid }})
+    needs: changes
+    if: needs.changes.outputs.gpui == 'true'
     strategy:
       fail-fast: false
       matrix:
