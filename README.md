@@ -119,13 +119,20 @@ On macOS, you can pass options to the app bundle with `open -a "Rio Settings" --
 
 If `RIO_CONFIG_HOME` is set, Rio (and the editor) use that folder instead.
 
-**Ghostty** reads `$XDG_CONFIG_HOME/ghostty/config.ghostty` (usually
-`~/.config/ghostty/config.ghostty`), or `config` without the extension in older setups. On macOS,
-Ghostty also reads `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` (or
-`config`), which is loaded later and overrides the `~/.config/ghostty` file. Matching Ghostty's own
-config-opening logic, the editor checks the Application Support location first on macOS, then the
-XDG location (skipping zero-byte files), and creates `config.ghostty` in Application Support on
-macOS or `$XDG_CONFIG_HOME/ghostty` on Linux when no config exists yet.
+**Ghostty** reads `config.ghostty` (or `config` without the extension in older setups) from:
+
+| OS | Location |
+|---|---|
+| macOS | `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` |
+| macOS, Linux | `$XDG_CONFIG_HOME/ghostty/config.ghostty`, usually `~/.config/ghostty/config.ghostty` |
+
+On macOS, Ghostty loads both, and the Application Support file is loaded last, so it overrides
+the XDG one. Matching Ghostty's own config-opening logic, the editor:
+
+- checks Application Support first on macOS, then the XDG location, and in each folder tries
+  `config.ghostty` before `config`, skipping zero-byte files;
+- creates `config.ghostty` in Application Support on macOS, or in `$XDG_CONFIG_HOME/ghostty` on
+  Linux, when no config exists yet.
 
 ## Troubleshooting
 
