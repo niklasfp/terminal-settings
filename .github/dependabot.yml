@@ -6,6 +6,8 @@ updates:
     directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 2
     groups:
       actions:
         patterns:
@@ -15,6 +17,8 @@ updates:
     directory: /editor/gpui
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 2
     groups:
       # GPUI Kit pins its GPUI snapshot exactly; its crates move together, in their own PR.
       gpui-kit:
@@ -29,6 +33,8 @@ updates:
     directory: /editor/tools/rio/schema-dump
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 2
     ignore:
       # Bumping rio-backend means regenerating the schema on purpose, not via a bot PR.
       - dependency-name: rio-backend
