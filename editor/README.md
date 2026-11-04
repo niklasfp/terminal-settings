@@ -70,11 +70,12 @@ a draft PR on `schema/rio`, `schema/ghostty`, or `schema/rio-themes`:
 1. **Detect (`ubuntu-latest`, read-only):** compares the latest upstream release tag against
    `rioVersion` in `schema/rio/rio-source.json` and `ghosttyVersion` in
    `schema/ghostty/ghostty-source.json` (skipping any version that already has an open PR).
-2. **Regenerate (`contents: read`, no secrets):** builds `tools/rio/schema-dump` for the release tag
-   on Linux or downloads and verifies the signed `Ghostty.dmg` (`com.mitchellh.ghostty`, Team ID
-   `24VZTF6M5V`) on macOS, regenerates `*-source.json`, runs `cargo test -p <crate> --locked` to
-   collect merge diagnostics (`RIO001…` / `GHO001…`) and widget-value checks, and uploads an
-   artifact bundle.
+2. **Regenerate (`contents: read`, no secrets):** on `macos-latest`, builds `tools/rio/schema-dump`
+   for the Rio release tag (matching `rio-backend`'s `#[cfg(target_os = "macos")]` defaults and enum
+   variants) or downloads and verifies the signed `Ghostty.dmg` (`com.mitchellh.ghostty`, Team ID
+   `24VZTF6M5V`), regenerates `*-source.json`, runs `cargo test -p <crate> --locked` to collect
+   merge diagnostics (`RIO001…` / `GHO001…`) and widget-value checks, and uploads an artifact
+   bundle.
 3. **Open or update the draft PR (`contents: write, pull-requests: write`):** commits only the
    allowlisted schema files via GitHub's GraphQL `createCommitOnBranch` API (so commits are signed)
    and opens or updates the draft PR with the settings diff table, diagnostics, test results, and
