@@ -137,7 +137,7 @@ function cmdDetect(): void {
     } else if (!forceRio && openPrMatchesTitle(repo, branch, expectedTitle)) {
       rows.push(`| Rio | \`${current}\` | \`${version}\` | Open PR already at \`${version}\` |`);
     } else {
-      include.push({ target: "rio", display: "Rio", os: "ubuntu-latest", current, version, branch });
+      include.push({ target: "rio", display: "Rio", os: "macos-latest", current, version, branch });
       rows.push(`| Rio | \`${current}\` | \`${version}\` | **Queued**${forceRio ? " (forced)" : ""} |`);
     }
   }
