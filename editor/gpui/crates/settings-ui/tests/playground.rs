@@ -4,7 +4,7 @@
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Bounds, Entity, TestAppContext, WindowBounds, WindowOptions, px, size};
 use settings_core::{AppDefinition, Document};
-use settings_ui::playground::{OpenedFile, PickedFile, Playground, ThemeDownload};
+use settings_ui::playground::{Copied, OpenedFile, PickedFile, Playground, ThemeDownload};
 use settings_ui::view::SettingsWindow;
 use std::sync::Mutex;
 
@@ -15,6 +15,29 @@ static SERIAL: Mutex<()> = Mutex::new(());
 
 fn no_file() -> PickedFile {
     Box::pin(async { None })
+}
+
+/// Files the fake page has had dropped on it, handed to the window one at a time.
+static DROPS: Mutex<Vec<OpenedFile>> = Mutex::new(Vec::new());
+
+/// The next dropped file, or waiting forever once there are none.
+fn next_drop() -> PickedFile {
+    match DROPS.lock().unwrap().pop() {
+        Some(file) => Box::pin(async { Some(file) }),
+        None => Box::pin(std::future::pending()),
+    }
+}
+
+/// What the fake clipboard holds; `None` while copying is refused.
+static CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
+static REFUSE_COPY: Mutex<bool> = Mutex::new(false);
+
+fn copy(text: &str) -> Copied {
+    let allowed = !*REFUSE_COPY.lock().unwrap();
+    if allowed {
+        *CLIPBOARD.lock().unwrap() = Some(text.to_string());
+    }
+    Box::pin(async move { allowed })
 }
 
 fn record(name: &str, bytes: &[u8]) {
@@ -60,6 +83,8 @@ fn open(cx: &mut TestAppContext, app: AppDefinition, name: &str, text: &str) -> 
 /// Like `open`, with an app already made for the browser and the browser's theme download.
 fn open_browser_app(cx: &mut TestAppContext, app: AppDefinition, name: &str, text: &str, install_theme: Option<fn(&str) -> ThemeDownload>) -> Fixture {
     DOWNLOADS.lock().unwrap().clear();
+    *CLIPBOARD.lock().unwrap() = None;
+    *REFUSE_COPY.lock().unwrap() = false;
     let app: &'static AppDefinition = Box::leak(Box::new(app));
     let document = Document::memory(name, text);
     cx.update(|cx| {
@@ -69,7 +94,9 @@ fn open_browser_app(cx: &mut TestAppContext, app: AppDefinition, name: &str, tex
             file_name: "config.toml",
             locations: &[("macOS", "~/.config/x/config")],
             open_file: no_file,
+            next_drop: Some(next_drop),
             download: record,
+            copy,
             install_theme,
         });
     });
@@ -85,6 +112,14 @@ fn open_browser_app(cx: &mut TestAppContext, app: AppDefinition, name: &str, tex
         .expect("open window")
     });
     Fixture { view, window }
+}
+
+fn drop_file(f: &Fixture, cx: &mut TestAppContext, name: &str, text: &str) {
+    cx.update_window(f.window, |_, window, cx| {
+        f.view.update(cx, |view, cx| view.open_dropped(OpenedFile { name: name.into(), bytes: text.as_bytes().to_vec() }, window, cx))
+    })
+    .expect("window");
+    cx.run_until_parked();
 }
 
 fn downloads() -> Vec<(String, String)> {
@@ -247,3 +282,65 @@ fn a_ghostty_theme_is_picked_from_the_shipped_ones_without_a_download(cx: &mut T
     f.download(cx);
     assert_eq!(downloads(), [("config.ghostty".to_string(), "font-size = 13\n\ntheme = Dracula\n".to_string())]);
 }
+
+#[gpui_kit::test]
+fn save_can_copy_the_file_instead_of_downloading_it(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = open(cx, rio_config::app(), "mine.toml", "# mine\n");
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.ui(cx, |window, cx| window.click("save", cx));
+    f.ui(cx, |window, cx| window.click("confirm-copy", cx));
+    assert_eq!(CLIPBOARD.lock().unwrap().as_deref(), Some("# mine\nconfirm-before-quit = false\n"));
+    assert!(downloads().is_empty(), "nothing downloaded");
+    assert_eq!(f.dirty(cx), 0, "the copy counts as saved");
+}
+
+#[gpui_kit::test]
+fn a_copy_the_browser_refuses_keeps_the_edits(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = open(cx, rio_config::app(), "mine.toml", "# mine\n");
+    *REFUSE_COPY.lock().unwrap() = true;
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.ui(cx, |window, cx| window.click("save", cx));
+    f.ui(cx, |window, cx| window.click("confirm-copy", cx));
+    assert_eq!(f.dirty(cx), 1, "nothing was saved");
+    // Downloading still works.
+    f.download(cx);
+    assert_eq!(downloads(), [("mine.toml".to_string(), "# mine\nconfirm-before-quit = false\n".to_string())]);
+}
+
+#[gpui_kit::test]
+fn a_downloaded_file_keeps_its_byte_order_mark(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = open(cx, rio_config::app(), "bom.toml", "\u{FEFF}# bom\n");
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.download(cx);
+    assert_eq!(downloads(), [("bom.toml".to_string(), "\u{FEFF}# bom\nconfirm-before-quit = false\n".to_string())]);
+}
+
+#[gpui_kit::test]
+fn a_file_dropped_on_the_page_is_opened(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    DROPS.lock().unwrap().push(OpenedFile { name: "dropped.toml".into(), bytes: b"# dropped\n".to_vec() });
+    let f = open(cx, rio_config::app(), "config.toml", "");
+    cx.run_until_parked();
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.download(cx);
+    assert_eq!(downloads()[0], ("dropped.toml".to_string(), "# dropped\nconfirm-before-quit = false\n".to_string()));
+
+    // With unsaved edits, a drop asks first; Cancel keeps them.
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    drop_file(&f, cx, "other.toml", "# other\n");
+    assert!(cx.has_pending_prompt(), "asks before discarding");
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(f.dirty(cx), 1, "the edit stays");
+    drop_file(&f, cx, "other.toml", "# other\n");
+    cx.simulate_prompt_answer("Discard");
+    cx.run_until_parked();
+    assert_eq!(f.dirty(cx), 0);
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.download(cx);
+    assert_eq!(downloads()[1], ("other.toml".to_string(), "# other\nconfirm-before-quit = false\n".to_string()));
+}
+

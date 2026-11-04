@@ -6,6 +6,7 @@ use crate::controls::Control;
 use crate::dropdowns::{FontItem, ThemeItem};
 use crate::menus::{self, Appearance};
 use crate::model::{self, ANSI, Editor, Lock};
+use crate::playground::Handoff;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _, Theme, ThemeMode,
     WindowExt as _, h_flex, v_flex,
@@ -124,6 +125,9 @@ pub struct SettingsWindow {
     pub(crate) next_row_id: u64,
     pub(crate) subs: Vec<Subscription>,
     errors: FieldErrors,
+    /// Settings a save refused: their value is checked again on every edit, so the error goes
+    /// once it's fixed and comes back while it's still wrong.
+    recheck: std::collections::HashSet<String>,
     search: Entity<InputState>,
     search_text: HashMap<String, String>,
     active_group: String,
@@ -138,8 +142,8 @@ pub struct SettingsWindow {
     expanded: std::collections::HashSet<String>,
     /// The latest theme choice per setting; a download only applies if it's still the latest.
     pub(crate) theme_requests: HashMap<String, u64>,
-    /// Watches a file for outside edits; none for text in memory.
-    _poll: Option<Task<()>>,
+    /// Watches a file for outside edits, or (in the browser) for files dropped on the page.
+    _watch: Option<Task<()>>,
 }
 
 impl SettingsWindow {
@@ -191,6 +195,7 @@ impl SettingsWindow {
             next_row_id: 0,
             subs: Vec::new(),
             errors: FieldErrors::new(),
+            recheck: Default::default(),
             search,
             search_text: schema.settings.iter().map(|s| (s.key.clone(), model::search_text(schema, s))).collect(),
             active_group: schema.groups.first().map(|g| g.id.clone()).unwrap_or_default(),
@@ -201,8 +206,11 @@ impl SettingsWindow {
             busy: false,
             expanded: Default::default(),
             theme_requests: HashMap::new(),
-            _poll: poll,
+            _watch: poll,
         };
+        if this._watch.is_none() {
+            this._watch = this.watch_drops(window, cx);
+        }
 
         this.apply_appearance(appearance, window, cx);
         for s in &schema.settings {
@@ -255,9 +263,23 @@ impl SettingsWindow {
     /// Records an edit from a widget. The widget already shows the value.
     pub(crate) fn edit(&mut self, key: &str, value: Value, _: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.editor.schema.find(key) else { return };
+        let error = if self.recheck.contains(key) { self.value_error(s, &value) } else { None };
         self.editor.edit(s, value);
-        self.errors.remove(key);
+        match error {
+            Some(message) => self.errors.insert(key.to_string(), message),
+            None => self.errors.remove(key),
+        };
         cx.notify();
+    }
+
+    /// What's wrong with one value on its own, as a save would say it. Checks the value only:
+    /// what depends on the rest of the file (or the terminal's own check) waits for the save.
+    fn value_error(&self, s: &'static Setting, value: &Value) -> Option<String> {
+        let change = settings_core::Change { setting: s, value: value.clone() };
+        match self.app.format.apply("", &[change], "") {
+            Err(settings_core::FormatError::Invalid(mut errors)) => errors.remove(&s.key),
+            _ => None,
+        }
     }
 
     /// Records an edit made outside the widget (e.g. a chosen file) and updates the widget.
@@ -274,6 +296,7 @@ impl SettingsWindow {
         }
         self.editor.reset(s);
         self.errors.remove(key);
+        self.recheck.remove(key);
         self.sync(key, window, cx);
         cx.notify();
     }
@@ -298,6 +321,7 @@ impl SettingsWindow {
         // A theme download finishing later must not bring a discarded choice back.
         self.theme_requests.values_mut().for_each(|n| *n += 1);
         self.errors.clear();
+        self.recheck.clear();
         self.sync_all(window, cx);
         cx.notify();
     }
@@ -425,7 +449,7 @@ impl SettingsWindow {
                     this.sync_all(window, cx);
                     window.push_notification("Nothing to save", cx);
                 }
-                Ok(result) => this.open_save_dialog(&result.before, &result.after, pending, window, cx),
+                Ok(result) => this.open_save_dialog(&result.before, result.after.clone(), pending, window, cx),
                 Err(err) => this.show_save_error(err, window, cx),
             },
             window,
@@ -436,21 +460,18 @@ impl SettingsWindow {
     fn open_save_dialog(
         &mut self,
         before: &str,
-        after: &str,
+        after: String,
         changes: Vec<(String, Value)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let changes = Rc::new(changes);
-        let diff = Rc::new(line_diff(before, after, 2));
-        let file = self.file_name();
+        let diff = Rc::new(line_diff(before, &after, 2));
+        let after = Rc::new(after);
+        let title = format!("Save changes to {}?", self.file_name());
         let this = cx.entity().downgrade();
-        let download = self.playground(cx).is_some();
-        let (title, action) = if download {
-            (format!("Download {file} with these changes?"), "Download")
-        } else {
-            (format!("Save changes to {file}?"), "Save")
-        };
+        // In the browser the file can't be written, so Save hands it over: a download, or a copy.
+        let playground = self.playground(cx).is_some();
         window.open_dialog(cx, move |dialog, _, cx| {
             let theme = cx.theme();
             let lines = diff.iter().map(|d| {
@@ -471,8 +492,18 @@ impl SettingsWindow {
                     .child(div().w_10().flex_shrink_0().pr_2().text_right().text_color(theme.muted_foreground).child(number))
                     .child(div().whitespace_nowrap().child(if d.op == DiffOp::Gap { String::new() } else { format!("{marker} {}", d.text) }))
             });
-            let save = this.clone();
-            let changes = changes.clone();
+            let confirm = |how: Option<Handoff>| {
+                let (this, changes, after) = (this.clone(), changes.clone(), after.clone());
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    window.close_dialog(cx);
+                    let changes = (*changes).clone();
+                    this.update(cx, |this, cx| match how {
+                        Some(how) => this.hand_off(how, changes, &after, window, cx),
+                        None => this.confirm_save(changes, None, window, cx),
+                    })
+                    .ok();
+                }
+            };
             dialog
                 .title(title.clone())
                 .w(px(720.))
@@ -501,17 +532,30 @@ impl SettingsWindow {
                         .justify_end()
                         .gap_2()
                         .child(Button::new("cancel").outline().label("Cancel").on_click(|_, window, cx| window.close_dialog(cx)))
-                        .child(Button::new("confirm-save").primary().label(action).on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                            let changes = (*changes).clone();
-                            save.update(cx, |this, cx| this.confirm_save(changes, window, cx)).ok();
-                        })),
+                        .when(playground, |row| {
+                            row.child(
+                                Button::new("confirm-copy")
+                                    .outline()
+                                    .icon(gpui_kit::assets::IconName::Copy)
+                                    .label("Copy")
+                                    .on_click(confirm(Some(Handoff::Copy))),
+                            )
+                        })
+                        .child(if playground {
+                            Button::new("confirm-save")
+                                .primary()
+                                .icon(gpui_kit::assets::IconName::Download)
+                                .label("Download")
+                                .on_click(confirm(Some(Handoff::Download)))
+                        } else {
+                            Button::new("confirm-save").primary().label("Save").on_click(confirm(None))
+                        }),
                 )
         });
     }
 
-    /// Saves exactly the changes the dialog showed.
-    fn confirm_save(&mut self, changes: Vec<(String, Value)>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Saves exactly the changes the dialog showed. `note` replaces the app's after-save message.
+    pub(crate) fn confirm_save(&mut self, changes: Vec<(String, Value)>, note: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -526,12 +570,11 @@ impl SettingsWindow {
                     // Only what was written; anything edited since stays pending.
                     this.editor.clear_saved(&saved);
                     this.errors.clear();
+                    this.recheck.clear();
                     this.banner = None;
                     this.sync_all(window, cx);
-                    if result.after != result.before {
-                        this.download(cx);
-                    }
-                    window.push_notification(Notification::success(result.note.unwrap_or_else(|| "Saved.".into())), cx);
+                    let note = note.or(result.note).unwrap_or_else(|| "Saved.".into());
+                    window.push_notification(Notification::success(note), cx);
                 }
                 Err(err) => this.show_save_error(err, window, cx),
             },
@@ -548,6 +591,7 @@ impl SettingsWindow {
                 for (key, message) in errors {
                     if self.editor.schema.find(&key).is_some() {
                         first.get_or_insert(key.clone());
+                        self.recheck.insert(key.clone());
                         self.errors.insert(key, message);
                     } else {
                         window.push_notification(Notification::error(message), cx);
@@ -697,11 +741,10 @@ impl SettingsWindow {
             .child(
                 Button::new("save")
                     .primary()
-                    .when(playground, |b| b.icon(gpui_kit::assets::IconName::Download))
-                    .label(if playground { "Download" } else { "Save" })
+                    .label("Save")
                     .disabled(dirty == 0 || self.busy)
                     // The web fonts have no ⌘ glyph, and a browser may not be on a Mac anyway.
-                    .tooltip(if playground { "Download the changed file" } else { "Save (⌘S)" })
+                    .tooltip(if playground { "Download or copy the changed file" } else { "Save (⌘S)" })
                     // The count pill beside the label, in the button's own colors. It always takes its
                     // space (just transparent at 0), so the button and the header row never change width.
                     .child(

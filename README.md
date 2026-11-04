@@ -7,7 +7,7 @@ config docs or editing config files by hand.
 ![Rio settings and Ghostty settings side by side](docs/images/hero.png)
 
 **[Try it in your browser](https://niklasfp.github.io/terminal-settings/)**: both editors run in a desktop browser
-with nothing to install. They download the edited file instead of saving it ([more](#try-it-in-the-browser)).
+with nothing to install. Saving there downloads the edited file or copies it ([more](#try-it-in-the-browser)).
 
 There are two separate native desktop apps, one per terminal:
 
@@ -19,7 +19,7 @@ There are two separate native desktop apps, one per terminal:
 Each one is a standalone native app with its own window, menus, and icon. There is no runtime to
 install, and it saves straight to the config file your terminal already reads. The
 [browser playground](#try-it-in-the-browser) is a demo of the same editors: it can't write to your
-terminal's config, so it gives you the file to download and put in place.
+terminal's config, so it gives you the file (a download, or a copy) to put in place.
 
 ## What you get
 
@@ -88,20 +88,21 @@ choose *More info → Run anyway*.
 
 The [playground](https://niklasfp.github.io/terminal-settings/) runs both editors in your browser:
 [Rio](https://niklasfp.github.io/terminal-settings/?app=rio) or
-[Ghostty](https://niklasfp.github.io/terminal-settings/?app=ghostty). Start from an empty config or
-press **Open…** to load yours, change settings, and press **Download** to get the edited file.
-Nothing is saved to your terminal. Put the downloaded file where your terminal reads it (see
+[Ghostty](https://niklasfp.github.io/terminal-settings/?app=ghostty). Start from an empty config, or
+press **Open…** or drop your config file on the page to load it. Change settings and press **Save**:
+after the diff, **Download** gives you the edited file and **Copy** puts it on the clipboard.
+Nothing is saved to your terminal. Put the file where your terminal reads it (see
 [Which file gets edited](#which-file-gets-edited)).
 
 What works: every setting with the same controls, search, the per-platform scope (Rio), the diff
-before downloading, and the same value checks as the desktop apps. The downloaded file is the same
+before saving, and the same value checks as the desktop apps. The downloaded file is the same
 file the desktop app would save for the same edits. Themes are picked from a list with previews:
 Ghostty's are the ones Ghostty ships, so the name is all it needs; for Rio, picking a theme from the
 catalogue also downloads its `.toml`, which goes in the `themes` folder next to `config.toml`.
 
 What doesn't, because a browser can't reach your system:
 
-- Saving in place. You always download the file.
+- Saving in place. You download or copy the file.
 - Ghostty's `ghostty +validate-config` check. Only the editor's own value checks run.
 - Your own themes. Only the built-in lists are offered (type any other name).
 - Your installed fonts. Font names are typed.

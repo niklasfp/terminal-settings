@@ -1,10 +1,10 @@
 //! settings-web: the browser playground. One WebAssembly module runs either editor, picked by the
-//! page's `?app=rio|ghostty`, over a config held in memory. Opening reads a file the user picks;
-//! saving downloads it. Everything here is the browser's side (`settings_ui::Playground`).
+//! page's `?app=rio|ghostty`, over a config held in memory. Opening reads a file the user picks
+//! or drops on the page; saving downloads it (or the editor copies it). Everything here is the browser's side (`settings_ui::Playground`).
 
 #![cfg(target_family = "wasm")]
 
-use settings_ui::playground::{OpenedFile, PickedFile, Playground, ThemeDownload};
+use settings_ui::playground::{Copied, OpenedFile, PickedFile, Playground, ThemeDownload};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::JsCast as _;
@@ -34,6 +34,7 @@ pub async fn start() {
         }
     };
     hide_status();
+    listen_for_drops();
     let fonts = settings_ui::WebFonts { files, sans: "IBM Plex Sans", mono: "IBM Plex Mono" };
     if query_app().as_deref() == Some("ghostty") {
         settings_ui::run_web(
@@ -93,7 +94,7 @@ fn playground(
     locations: &'static [(&'static str, &'static str)],
     install_theme: Option<fn(&str) -> ThemeDownload>,
 ) -> Playground {
-    Playground { file_name, locations, open_file, download, install_theme }
+    Playground { file_name, locations, open_file, next_drop: Some(next_drop), download, copy, install_theme }
 }
 
 /// Rio needs a theme's file next to the config: fetch it from the catalogue's pinned commit and
@@ -171,6 +172,56 @@ impl Drop for Picker {
     fn drop(&mut self) {
         self.input.remove();
     }
+}
+
+thread_local! {
+    /// Where the next file dropped on the page goes: the window waiting for it.
+    static DROP_WAITER: RefCell<Option<futures_channel::oneshot::Sender<Option<OpenedFile>>>> = const { RefCell::new(None) };
+}
+
+/// Waits for the next file dropped on the page.
+fn next_drop() -> PickedFile {
+    let (tx, rx) = futures_channel::oneshot::channel();
+    DROP_WAITER.with(|waiter| *waiter.borrow_mut() = Some(tx));
+    Box::pin(async move { rx.await.ok().flatten() })
+}
+
+/// Files can be dropped anywhere on the page, for as long as it's open. The canvas cancels the
+/// browser's own handling (opening the file in the tab); the drop still reaches the window.
+fn listen_for_drops() {
+    let Some(window) = web_sys::window() else { return };
+    let over = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|event: web_sys::DragEvent| {
+        event.prevent_default();
+        if let Some(data) = event.data_transfer() {
+            data.set_drop_effect("copy");
+        }
+    });
+    let dropped = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|event: web_sys::DragEvent| {
+        event.prevent_default();
+        let Some(file) = event.data_transfer().and_then(|d| d.files()).and_then(|files| files.get(0)) else { return };
+        let Some(tx) = DROP_WAITER.with(|waiter| waiter.borrow_mut().take()) else { return };
+        wasm_bindgen_futures::spawn_local(async move {
+            let bytes = JsFuture::from(file.array_buffer()).await.ok().map(|buffer| js_sys::Uint8Array::new(&buffer).to_vec());
+            let _ = tx.send(bytes.map(|bytes| OpenedFile { name: file.name(), bytes }));
+        });
+    });
+    for (event, listener) in [("dragover", over), ("drop", dropped)] {
+        let _ = window.add_event_listener_with_callback(event, listener.as_ref().unchecked_ref());
+        // The page's whole life.
+        listener.forget();
+    }
+}
+
+/// Copies `text` to the clipboard. Browsers only offer the clipboard on HTTPS (and localhost),
+/// and may still refuse; either way the result says so.
+fn copy(text: &str) -> Copied {
+    let Some(navigator) = web_sys::window().map(|w| w.navigator()) else { return Box::pin(async { false }) };
+    let available = js_sys::Reflect::get(navigator.as_ref(), &"clipboard".into()).is_ok_and(|c| !c.is_undefined() && !c.is_null());
+    if !available {
+        return Box::pin(async { false });
+    }
+    let written = JsFuture::from(navigator.clipboard().write_text(text));
+    Box::pin(async move { written.await.is_ok() })
 }
 
 /// Downloads `bytes` as a file called `name`.
