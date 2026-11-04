@@ -13,6 +13,7 @@ crates/rio-config       Rio: schema merge, span-splicing config.toml format, val
 crates/ghostty-config   Ghostty: schema merge, line format, +validate-config, reload, themes
 apps/rio-settings       main.rs = settings_ui::run(rio_config::app(), Rio's brand)
 apps/ghostty-settings   main.rs = settings_ui::run(ghostty_config::app(), Ghostty's brand)
+apps/settings-web       The browser playground (wasm): settings_ui::run_web for either app; see ../README.md
 ```
 
 The schemas come from `../schema/<terminal>/` (`*-source.json` + `*-overlay.json`), compiled in with

@@ -1,0 +1,63 @@
+name: Pages
+
+# Deploys the browser playground (editor/gpui/apps/settings-web) to GitHub Pages from main. The
+# site is static: index.html, wasm-bindgen's JS glue and the wasm module. It runs single-threaded,
+# so it needs no cross-origin isolation headers (which Pages can't send). The fonts load from
+# jsDelivr at startup and aren't part of the site.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'editor/gpui/**'
+      - 'editor/schema/**'
+      - 'editor/brand/**'
+      - 'editor/tools/web/**'
+      - '.github/actions/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits rather than cancelling one mid-deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the playground
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-gpui
+        with:
+          cache-key: web
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - uses: ./.github/actions/build-web
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: editor/gpui/target/web
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

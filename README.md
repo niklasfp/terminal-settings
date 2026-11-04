@@ -6,6 +6,9 @@ config docs or editing config files by hand.
 
 ![Rio settings and Ghostty settings side by side](docs/images/hero.png)
 
+**[Try it in your browser](https://niklasfp.github.io/terminal-settings/)**: both editors run in a desktop browser
+with nothing to install. They download the edited file instead of saving it ([more](#try-it-in-the-browser)).
+
 There are two separate native desktop apps, one per terminal:
 
 | | For | Runs on |
@@ -13,8 +16,10 @@ There are two separate native desktop apps, one per terminal:
 | **rio-settings** | [Rio](https://rioterm.com) | macOS, Linux, Windows |
 | **ghostty-settings** | [Ghostty](https://ghostty.org) | macOS, Linux (Ghostty has no Windows version) |
 
-Each one is a standalone native app with its own window, menus, and icon. There is no runtime or
-browser extension to install, and it saves straight to the config file your terminal already reads.
+Each one is a standalone native app with its own window, menus, and icon. There is no runtime to
+install, and it saves straight to the config file your terminal already reads. The
+[browser playground](#try-it-in-the-browser) is a demo of the same editors: it can't write to your
+terminal's config, so it gives you the file to download and put in place.
 
 ## What you get
 
@@ -37,8 +42,8 @@ browser extension to install, and it saves straight to the config file your term
   appearance, and opening the config file.
 - **Light and dark.** Follows your system or lets you pick Light or Dark (and remembers your
   choice). Each editor wears its terminal's own colors and logo.
-- **Local and private.** Everything runs locally in a native window. Nothing is sent anywhere; the
-  only network use is downloading a Rio theme when you pick one from the catalogue.
+- **Local and private.** The desktop apps run locally in a native window. Nothing is sent anywhere;
+  the only network use is downloading a Rio theme when you pick one from the catalogue.
 
 | Rio, dark | Ghostty, light |
 |---|---|
@@ -78,6 +83,30 @@ xattr -dr com.apple.quarantine "/Applications/Rio Settings.app"
 
 **Windows:** extract the `.zip` archive and run `rio-settings.exe`. If SmartScreen warns you,
 choose *More info → Run anyway*.
+
+## Try it in the browser
+
+The [playground](https://niklasfp.github.io/terminal-settings/) runs both editors in your browser:
+[Rio](https://niklasfp.github.io/terminal-settings/?app=rio) or
+[Ghostty](https://niklasfp.github.io/terminal-settings/?app=ghostty). Start from an empty config or
+press **Open…** to load yours, change settings, and press **Download** to get the edited file.
+Nothing is saved to your terminal. Put the downloaded file where your terminal reads it (see
+[Which file gets edited](#which-file-gets-edited)).
+
+What works: every setting with the same controls, search, the per-platform scope (Rio), the diff
+before downloading, and the same value checks as the desktop apps. The downloaded file is the same
+file the desktop app would save for the same edits.
+
+What doesn't, because a browser can't reach your system:
+
+- Saving in place. You always download the file.
+- Ghostty's `ghostty +validate-config` check. Only the editor's own value checks run.
+- Theme lists and downloads. Theme names are typed.
+- Your installed fonts. Font names are typed.
+- File pickers and *Show in Finder* for path settings. Paths are typed.
+
+It needs a desktop browser with WebGPU or WebGL2 (current Chrome, Edge, Firefox or Safari). Your
+config never leaves the browser. The page loads its fonts (IBM Plex) from jsDelivr.
 
 ## Use
 
