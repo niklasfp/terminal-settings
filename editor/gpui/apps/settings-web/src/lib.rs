@@ -4,7 +4,7 @@
 
 #![cfg(target_family = "wasm")]
 
-use settings_ui::playground::{OpenedFile, PickedFile, Playground};
+use settings_ui::playground::{OpenedFile, PickedFile, Playground, ThemeDownload};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::JsCast as _;
@@ -37,26 +37,26 @@ pub async fn start() {
     let fonts = settings_ui::WebFonts { files, sans: "IBM Plex Sans", mono: "IBM Plex Mono" };
     if query_app().as_deref() == Some("ghostty") {
         settings_ui::run_web(
-            ghostty_config::app(),
+            ghostty_config::browser_app(),
             settings_ui::Brand {
                 theme_json: include_str!("../../ghostty-settings/ghostty-theme.json"),
                 light_theme: "Ghostty Light",
                 dark_theme: "Ghostty Dark",
                 logo: include_bytes!("../../../../brand/ghostty-logo.png"),
             },
-            playground(ghostty_config::CONFIG_FILE_NAME, ghostty_config::CONFIG_LOCATIONS),
+            playground(ghostty_config::CONFIG_FILE_NAME, ghostty_config::CONFIG_LOCATIONS, None),
             fonts,
         );
     } else {
         settings_ui::run_web(
-            rio_config::app(),
+            rio_config::browser_app(),
             settings_ui::Brand {
                 theme_json: include_str!("../../rio-settings/rio-theme.json"),
                 light_theme: "Rio Light",
                 dark_theme: "Rio Dark",
                 logo: include_bytes!("../../../../brand/rio-logo.svg"),
             },
-            playground(rio_config::CONFIG_FILE_NAME, rio_config::CONFIG_LOCATIONS),
+            playground(rio_config::CONFIG_FILE_NAME, rio_config::CONFIG_LOCATIONS, Some(download_rio_theme)),
             fonts,
         );
     }
@@ -88,8 +88,25 @@ fn show_status(text: &str) {
     }
 }
 
-fn playground(file_name: &'static str, locations: &'static [(&'static str, &'static str)]) -> Playground {
-    Playground { file_name, locations, open_file, download }
+fn playground(
+    file_name: &'static str,
+    locations: &'static [(&'static str, &'static str)],
+    install_theme: Option<fn(&str) -> ThemeDownload>,
+) -> Playground {
+    Playground { file_name, locations, open_file, download, install_theme }
+}
+
+/// Rio needs a theme's file next to the config: fetch it from the catalogue's pinned commit and
+/// hand it to the user as `<name>.toml`.
+fn download_rio_theme(name: &str) -> ThemeDownload {
+    let name = name.to_string();
+    Box::pin(async move {
+        let url = rio_config::theme_url(&name)?;
+        let bytes = fetch_bytes(&url).await.map_err(|_| format!("Couldn't download the theme '{name}'."))?;
+        let file = format!("{name}.toml");
+        download(&file, &bytes);
+        Ok(file)
+    })
 }
 
 /// `?app=` from the page's address.

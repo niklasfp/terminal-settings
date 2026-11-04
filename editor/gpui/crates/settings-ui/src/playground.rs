@@ -19,6 +19,9 @@ pub struct OpenedFile {
 /// A file being picked: resolves to the file, or `None` when the user cancels.
 pub type PickedFile = Pin<Box<dyn Future<Output = Option<OpenedFile>>>>;
 
+/// A theme file being downloaded: resolves to the downloaded file's name, or a user-facing error.
+pub type ThemeDownload = Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
 /// What the window needs from the browser. Set as a global; without it the window edits files.
 pub struct Playground {
     /// What a new config is called (and downloaded as) until a file is opened, e.g. "config.toml".
@@ -29,6 +32,9 @@ pub struct Playground {
     pub open_file: fn() -> PickedFile,
     /// Hands `bytes` to the browser as a download called `name`.
     pub download: fn(&str, &[u8]),
+    /// Downloads a theme the app lists as not installed (its file has to be put in place, like the
+    /// config). `None` when every listed theme works by name.
+    pub install_theme: Option<fn(&str) -> ThemeDownload>,
 }
 
 impl Global for Playground {}

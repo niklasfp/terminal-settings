@@ -4,7 +4,7 @@
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Bounds, Entity, TestAppContext, WindowBounds, WindowOptions, px, size};
 use settings_core::{AppDefinition, Document};
-use settings_ui::playground::{OpenedFile, PickedFile, Playground};
+use settings_ui::playground::{OpenedFile, PickedFile, Playground, ThemeDownload};
 use settings_ui::view::SettingsWindow;
 use std::sync::Mutex;
 
@@ -54,8 +54,13 @@ impl Fixture {
 }
 
 fn open(cx: &mut TestAppContext, app: AppDefinition, name: &str, text: &str) -> Fixture {
+    open_browser_app(cx, app.for_browser(), name, text, None)
+}
+
+/// Like `open`, with an app already made for the browser and the browser's theme download.
+fn open_browser_app(cx: &mut TestAppContext, app: AppDefinition, name: &str, text: &str, install_theme: Option<fn(&str) -> ThemeDownload>) -> Fixture {
     DOWNLOADS.lock().unwrap().clear();
-    let app: &'static AppDefinition = Box::leak(Box::new(app.for_browser()));
+    let app: &'static AppDefinition = Box::leak(Box::new(app));
     let document = Document::memory(name, text);
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -65,6 +70,7 @@ fn open(cx: &mut TestAppContext, app: AppDefinition, name: &str, text: &str) -> 
             locations: &[("macOS", "~/.config/x/config")],
             open_file: no_file,
             download: record,
+            install_theme,
         });
     });
     let (window, view) = cx.update(|cx| {
@@ -195,4 +201,49 @@ fn opening_a_file_drops_half_typed_entries_and_a_stale_save_dialog(cx: &mut Test
     f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
     f.download(cx);
     assert_eq!(downloads(), [("second.toml".to_string(), "# second\nconfirm-before-quit = false\n".to_string())]);
+}
+
+/// A fake theme download: records the theme as a downloaded `<name>.toml`.
+fn fake_theme_download(name: &str) -> ThemeDownload {
+    let file = format!("{name}.toml");
+    record(&file, b"[colors]\n");
+    Box::pin(async move { Ok(file) })
+}
+
+fn pick_theme(f: &Fixture, cx: &mut TestAppContext, name: &str) {
+    cx.run_until_parked(); // the theme list loads in the background
+    f.search(cx, "theme");
+    f.ui(cx, |window, cx| window.click("theme:theme", cx));
+    // Type into the popover's search field.
+    f.ui(cx, |window, cx| {
+        let search = window.within("theme:theme").find_all_by_role(gpui_kit::Role::TextInput).into_iter().last().expect("the search field");
+        let id = search.path().last().cloned().expect("field id");
+        window.within("theme:theme").click(id, cx);
+    });
+    // The field takes text input once it has painted focused.
+    f.ui(cx, |window, cx| window.input(name, cx));
+    cx.executor().advance_clock(std::time::Duration::from_millis(300));
+    f.ui(cx, |_, _| {});
+    f.ui(cx, |window, cx| window.press("enter", cx));
+}
+
+#[gpui_kit::test]
+fn a_rio_theme_is_picked_from_the_catalogue_and_its_file_downloaded(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = open_browser_app(cx, rio_config::browser_app(), "config.toml", "", Some(fake_theme_download));
+    pick_theme(&f, cx, "Dracula");
+    assert_eq!(f.dirty(cx), 1, "the picked theme is pending");
+    assert_eq!(downloads()[0].0, "Dracula.toml", "the theme file was handed to the browser");
+    f.download(cx);
+    assert_eq!(downloads()[1], ("config.toml".to_string(), "theme = \"Dracula\"\n".to_string()));
+}
+
+#[gpui_kit::test]
+fn a_ghostty_theme_is_picked_from_the_shipped_ones_without_a_download(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = open_browser_app(cx, ghostty_config::browser_app(), "config.ghostty", "font-size = 13\n", None);
+    pick_theme(&f, cx, "Dracula");
+    assert_eq!(f.dirty(cx), 1);
+    f.download(cx);
+    assert_eq!(downloads(), [("config.ghostty".to_string(), "font-size = 13\n\ntheme = Dracula\n".to_string())]);
 }

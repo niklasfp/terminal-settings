@@ -4,7 +4,7 @@
 
 use crate::toml_doc::ConfigDocument;
 use serde_json::Value;
-use settings_core::{ThemeInfo, theme_list, themes_dir};
+use settings_core::{ThemeInfo, theme_list, themes_dir, themes_from_json};
 use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -29,42 +29,18 @@ fn catalogue() -> &'static Catalogue {
 
 fn load_catalogue(json: &str) -> Catalogue {
     let root: Value = serde_json::from_str(json).unwrap_or(Value::Null);
-    let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
-    let mut themes: Vec<ThemeInfo> = Vec::new();
-    for t in root
-        .get("themes")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let Some(name) = text(t, "name") else {
-            continue;
-        };
-        let ansi = t
-            .get("ansi")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().map(|c| c.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
-        let info = ThemeInfo {
-            name,
-            installed: false,
-            background: text(t, "bg"),
-            foreground: text(t, "fg"),
-            ansi,
-        };
-        // Later entries win, like a dictionary keyed by name.
-        match themes.iter_mut().find(|x| x.name == info.name) {
-            Some(existing) => *existing = info,
-            None => themes.push(info),
-        }
-    }
-    themes.sort_by_cached_key(|t| t.name.to_uppercase());
+    let text = |k: &str| root.get(k).and_then(Value::as_str).map(str::to_string);
     Catalogue {
-        repo: text(&root, "repo").unwrap_or_default(),
-        commit: text(&root, "commit").unwrap_or_default(),
-        path: text(&root, "path").unwrap_or_else(|| "rio".into()),
-        themes,
+        repo: text("repo").unwrap_or_default(),
+        commit: text("commit").unwrap_or_default(),
+        path: text("path").unwrap_or_else(|| "rio".into()),
+        themes: themes_from_json(json, false),
     }
+}
+
+/// The catalogue alone, none installed: what a browser, which has no theme folder, can offer.
+pub fn catalogue_themes() -> Vec<ThemeInfo> {
+    catalogue().themes.clone()
 }
 
 /// Installed themes first, then catalogue themes that aren't installed; each sorted by name.
@@ -113,8 +89,8 @@ fn read_installed(file: &Path) -> ThemeInfo {
     }
 }
 
-/// Downloads one catalogue theme into the themes folder. Blocking. `Err` is user-facing.
-pub fn install(config_path: &Path, name: &str) -> Result<(), String> {
+/// Where a catalogue theme's file is downloaded from (a pinned commit). `Err` is user-facing.
+pub fn theme_url(name: &str) -> Result<String, String> {
     let cat = catalogue();
     // Only names from the baked-in catalogue: they also become file names, so no paths sneak in.
     if !cat.themes.iter().any(|t| t.name == name) {
@@ -125,13 +101,18 @@ pub fn install(config_path: &Path, name: &str) -> Result<(), String> {
             "'{name}' can't be used as a file name on this system."
         ));
     }
-    let url = format!(
+    Ok(format!(
         "https://raw.githubusercontent.com/{}/{}/{}/{}.toml",
         cat.repo,
         cat.commit,
         cat.path,
         escape_data_string(name)
-    );
+    ))
+}
+
+/// Downloads one catalogue theme into the themes folder. Blocking. `Err` is user-facing.
+pub fn install(config_path: &Path, name: &str) -> Result<(), String> {
+    let url = theme_url(name)?;
     let text = download(&url).map_err(|e| format!("Couldn't download the theme ({e})."))?;
     if ConfigDocument::parse(&text).is_err() {
         return Err("The downloaded theme isn't valid TOML.".into());

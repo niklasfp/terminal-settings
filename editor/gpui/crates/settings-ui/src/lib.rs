@@ -106,10 +106,11 @@ pub struct WebFonts {
 
 /// Runs the settings window in the page (the browser playground): one full-page window over a
 /// config held in memory, starting empty. No arguments, menus, file polling or saved appearance;
-/// `AppDefinition::for_browser` drops what needs the system.
+/// `app` is the browser's definition (e.g. `rio_config::browser_app()`, built on
+/// `AppDefinition::for_browser`), without what needs the system.
 #[cfg(target_family = "wasm")]
 pub fn run_web(app: AppDefinition, brand: Brand, playground: playground::Playground, fonts: WebFonts) {
-    let app: &'static AppDefinition = Box::leak(Box::new(app.for_browser()));
+    let app: &'static AppDefinition = Box::leak(Box::new(app));
     let document = settings_core::Document::memory(playground.file_name, "");
     gpui_kit::application().with_assets(assets::AppAssets { logo: brand.logo }).run(move |cx| {
         let files = fonts.files.into_iter().map(std::borrow::Cow::Owned).collect();

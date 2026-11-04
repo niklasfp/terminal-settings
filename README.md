@@ -95,13 +95,15 @@ Nothing is saved to your terminal. Put the downloaded file where your terminal r
 
 What works: every setting with the same controls, search, the per-platform scope (Rio), the diff
 before downloading, and the same value checks as the desktop apps. The downloaded file is the same
-file the desktop app would save for the same edits.
+file the desktop app would save for the same edits. Themes are picked from a list with previews:
+Ghostty's are the ones Ghostty ships, so the name is all it needs; for Rio, picking a theme from the
+catalogue also downloads its `.toml`, which goes in the `themes` folder next to `config.toml`.
 
 What doesn't, because a browser can't reach your system:
 
 - Saving in place. You always download the file.
 - Ghostty's `ghostty +validate-config` check. Only the editor's own value checks run.
-- Theme lists and downloads. Theme names are typed.
+- Your own themes. Only the built-in lists are offered (type any other name).
 - Your installed fonts. Font names are typed.
 - File pickers and *Show in Finder* for path settings. Paths are typed.
 

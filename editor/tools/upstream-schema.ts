@@ -43,7 +43,7 @@ const ALLOWED_FILES: Record<TargetId, string[]> = {
     "editor/tools/rio/schema-dump/Cargo.toml",
     "editor/tools/rio/schema-dump/Cargo.lock",
   ],
-  ghostty: ["editor/schema/ghostty/ghostty-source.json"],
+  ghostty: ["editor/schema/ghostty/ghostty-source.json", "editor/schema/ghostty/ghostty-themes.json"],
   "rio-themes": ["editor/schema/rio/rio-themes.json"],
 };
 

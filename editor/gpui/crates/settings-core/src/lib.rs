@@ -86,6 +86,30 @@ pub fn theme_list(mut user: Vec<ThemeInfo>, others: impl IntoIterator<Item = The
     user
 }
 
+/// Themes from a generated theme list (`schema/<terminal>/<terminal>-themes.json`): `{"themes": [{"name",
+/// "bg", "fg", "ansi": [8 colors]}]}`. A later entry with the same name wins; sorted by name, ignoring
+/// case. `installed` says whether the terminal can use them right away.
+pub fn themes_from_json(json: &str, installed: bool) -> Vec<ThemeInfo> {
+    let root: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    let text = |v: &serde_json::Value, k: &str| v.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
+    let mut themes: Vec<ThemeInfo> = Vec::new();
+    for t in root.get("themes").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        let Some(name) = text(t, "name") else { continue };
+        let ansi = t
+            .get("ansi")
+            .and_then(serde_json::Value::as_array)
+            .map(|a| a.iter().map(|c| c.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let info = ThemeInfo { name, installed, background: text(t, "bg"), foreground: text(t, "fg"), ansi };
+        match themes.iter_mut().find(|x| x.name == info.name) {
+            Some(existing) => *existing = info,
+            None => themes.push(info),
+        }
+    }
+    themes.sort_by_cached_key(|t| t.name.to_uppercase());
+    themes
+}
+
 /// Installs a catalogue theme for the config at the given path. Blocking. `Err` is user-facing.
 pub type InstallTheme = fn(&std::path::Path, &str) -> Result<(), String>;
 

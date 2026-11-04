@@ -2,7 +2,7 @@
 //! state (inputs, sliders, pickers); the value itself always lives in the `Editor` model.
 //! `sync` pushes the model's value into the widgets; widget events go back through `on_input`.
 
-use crate::dropdowns::{Chooser, FontItem, ThemeItem, names};
+use crate::dropdowns::{ChoiceEvent, Chooser, FontItem, ThemeItem, names};
 use crate::paths::PathKind;
 use crate::model::{plain, same};
 use settings_core::{format_number, humanize};
@@ -256,7 +256,7 @@ impl SettingsWindow {
                 let order: Rc<Vec<SharedString>> = Rc::new(s.values.iter().flatten().map(SharedString::from).collect());
                 let chooser = Chooser::new(true, false, window, cx);
                 let flags = order.clone();
-                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<SharedString>>, window, cx| {
+                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<SharedString>, window, cx| {
                     let ComboboxEvent::Change(on) = ev else { return };
                     // The file lists flags in the schema's order, whatever order they were ticked in.
                     let on: Vec<Value> = flags.iter().filter(|f| on.contains(f)).map(|f| Value::String(f.to_string())).collect();
@@ -267,7 +267,7 @@ impl SettingsWindow {
             }
             SettingType::Theme => {
                 let chooser = Chooser::new(false, true, window, cx);
-                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<ThemeItem>>, window, cx| {
+                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<ThemeItem>, window, cx| {
                     let ComboboxEvent::Change(names) = ev else { return };
                     this.choose_theme(&key, names.first().map(ToString::to_string), window, cx);
                 });
@@ -293,7 +293,7 @@ impl SettingsWindow {
                 let multiple = s.ty == SettingType::Fonts;
                 // Items arrive with the first sync, which also adds the value's fonts that aren't installed.
                 let chooser = Chooser::new(multiple, true, window, cx);
-                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<FontItem>>, window, cx| {
+                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<FontItem>, window, cx| {
                     let ComboboxEvent::Change(fonts) = ev else { return };
                     let mut fonts = fonts.iter().map(|f| Value::String(f.to_string()));
                     let value = if multiple { Value::Array(fonts.collect()) } else { fonts.next().unwrap_or(Value::Null) };
@@ -536,7 +536,7 @@ impl SettingsWindow {
             if f.ty == SettingType::Font && self.document.is_file() {
                 let mut chooser: Chooser<FontItem> = Chooser::new(false, true, window, cx);
                 chooser.sync(&self.fonts.clone(), &names(&Value::String(initial)), &[], window, cx);
-                subs.push(cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<FontItem>>, window, cx| {
+                subs.push(cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<FontItem>, window, cx| {
                     if matches!(ev, ComboboxEvent::Change(_)) {
                         this.on_input(&key, window, cx);
                     }

@@ -69,8 +69,10 @@ Without `--config` they edit the live configs (`~/.config/rio/config.toml` or `$
 platform (WebGPU, falling back to WebGL2, drawn into one full-page canvas). It runs
 `settings_ui::run_web`: the config is text in memory (`settings_core::Document::Memory`), **Open…**
 reads a file the user picks, saving downloads the result, and `AppDefinition::for_browser` drops
-what needs the system (theme lists and downloads, Ghostty's validation and suggestion lists, the
-reload). The browser side (file picker, download) comes in through `settings_ui::playground::Playground`,
+what needs the system (the installed-theme lists and installing, Ghostty's validation and suggestion
+lists, the reload). `rio_config::browser_app` and `ghostty_config::browser_app` add their built-in
+theme lists back: Rio's catalogue (picking one downloads its file through the `Playground`'s
+`install_theme`) and the themes Ghostty ships (`schema/ghostty/ghostty-themes.json`). The browser side (file picker, download) comes in through `settings_ui::playground::Playground`,
 so `crates/settings-ui/tests/playground.rs` tests the same window natively.
 
 Build and serve it locally (needs the wasm target and `wasm-bindgen-cli` at the version of the

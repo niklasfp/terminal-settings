@@ -47,6 +47,21 @@ pub const CONFIG_LOCATIONS: &[(&str, &str)] = &[
     ("Linux", "~/.config/ghostty/config.ghostty (or $XDG_CONFIG_HOME/ghostty)"),
 ];
 
+/// The themes Ghostty ships, from `schema/ghostty/ghostty-themes.json` (generated with the source schema).
+/// They work by name without installing anything.
+pub fn bundled_themes() -> Vec<settings_core::ThemeInfo> {
+    settings_core::themes_from_json(include_str!("../../../../schema/ghostty/ghostty-themes.json"), true)
+}
+
+/// Ghostty's editor as the browser playground runs it (`AppDefinition::for_browser`), listing the
+/// themes Ghostty ships.
+pub fn browser_app() -> AppDefinition {
+    AppDefinition {
+        themes: Some(|_| bundled_themes()),
+        ..app().for_browser()
+    }
+}
+
 /// Ghostty's editor definition: line-based config, checked by Ghostty itself, reloaded via AppleScript.
 pub fn app() -> AppDefinition {
     AppDefinition {
@@ -269,6 +284,18 @@ fn reload_note(output: Option<&Output>) -> &'static str {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn the_browser_lists_the_shipped_themes_with_their_colors() {
+        let app = browser_app();
+        assert!(app.validate.is_none() && app.lists.is_none(), "nothing that runs Ghostty");
+        let themes = (app.themes.expect("a theme list"))(Path::new("config.ghostty"));
+        assert!(themes.len() > 500, "{} themes", themes.len());
+        let dracula = themes.iter().find(|t| t.name == "Dracula").expect("Dracula");
+        assert!(dracula.installed, "shipped themes work by name");
+        assert_eq!(dracula.background.as_deref(), Some("#282a36"));
+        assert_eq!(dracula.ansi[1].as_deref(), Some("#ff5555"));
+    }
 
     #[test]
     fn app_is_wired_up() {

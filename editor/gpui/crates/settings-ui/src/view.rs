@@ -332,7 +332,7 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn file_name(&self) -> String {
+    pub(crate) fn file_name(&self) -> String {
         self.document.file_name().unwrap_or_else(|| "the config file".into())
     }
 
