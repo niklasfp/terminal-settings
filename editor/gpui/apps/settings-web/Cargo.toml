@@ -1,0 +1,40 @@
+[package]
+name = "settings-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The browser playground: both editors in one WebAssembly module, picked with `?app=rio|ghostty`.
+# Built with `node tools/web/build.ts` (cargo + wasm-bindgen); see editor/README.md.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Everything is wasm-only, so a native workspace build compiles an empty crate.
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui-kit.workspace = true
+settings-ui.workspace = true
+rio-config.workspace = true
+ghostty-config.workspace = true
+wasm-bindgen = "0.2.130"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Blob",
+    "CssStyleDeclaration",
+    "BlobPropertyBag",
+    "Document",
+    "Element",
+    "Event",
+    "File",
+    "FileList",
+    "HtmlAnchorElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Location",
+    "Response",
+    "Url",
+    "Window",
+] }
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }

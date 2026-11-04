@@ -237,11 +237,20 @@ impl SettingsWindow {
     /// Creates the control for a setting and subscribes to its widget events.
     pub(crate) fn create_control(&mut self, s: &'static Setting, window: &mut Window, cx: &mut Context<Self>) -> Control {
         let key = s.key.clone();
+        // Without a list to choose from, a font or theme is typed: as text, or as a list of entries.
+        // A config held in memory is for another machine, so the fonts installed here don't apply;
+        // an app may have no theme list.
+        let (ty, typed) = match s.ty {
+            SettingType::Font if !self.document.is_file() => (SettingType::String, Some("Font name")),
+            SettingType::Fonts if !self.document.is_file() => (SettingType::Strings, Some("Add a font…")),
+            SettingType::Theme if self.app.themes.is_none() => (SettingType::String, Some("Theme name")),
+            ty => (ty, None),
+        };
         let text_input = |window: &mut Window, cx: &mut Context<Self>| {
-            let ph = placeholder(s);
+            let ph = typed.map_or_else(|| placeholder(s), String::from);
             cx.new(|cx| InputState::new(window, cx).placeholder(ph))
         };
-        match s.ty {
+        match ty {
             SettingType::Flags if s.values.as_ref().is_some_and(|v| v.len() > MAX_FLAG_CHECKBOXES) => {
                 let order: Rc<Vec<SharedString>> = Rc::new(s.values.iter().flatten().map(SharedString::from).collect());
                 let chooser = Chooser::new(true, false, window, cx);
@@ -514,7 +523,7 @@ impl SettingsWindow {
         for f in s.fields.as_deref().unwrap_or_default() {
             let initial = record.get(&f.key).map(plain).unwrap_or_default();
             let key = key.to_string();
-            if f.ty == SettingType::Font {
+            if f.ty == SettingType::Font && self.document.is_file() {
                 let mut chooser: Chooser<FontItem> = Chooser::new(false, true, window, cx);
                 chooser.sync(&self.fonts.clone(), &names(&Value::String(initial)), &[], window, cx);
                 subs.push(cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<FontItem>>, window, cx| {

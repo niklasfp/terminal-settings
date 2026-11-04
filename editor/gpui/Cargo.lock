@@ -2651,8 +2651,6 @@ dependencies = [
 [[package]]
 name = "gpui-kit"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c464934b5cdb85dd3fc511e60d09fb446fba422de159a80038368f52893c14b"
 dependencies = [
  "gpui-base",
  "gpui-component",
@@ -3117,7 +3115,6 @@ dependencies = [
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm_thread",
  "web-sys",
  "web-time",
 ]
@@ -6607,6 +6604,22 @@ dependencies = [
  "serde_json",
  "settings-core",
  "tempfile",
+]
+
+[[package]]
+name = "settings-web"
+version = "0.1.0"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "ghostty-config",
+ "gpui-kit",
+ "js-sys",
+ "rio-config",
+ "settings-ui",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ use settings_core::{ThemeInfo, theme_list, themes_dir};
 use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 const ANSI_NAMES: [&str; 8] = [
@@ -141,6 +142,7 @@ pub fn install(config_path: &Path, name: &str) -> Result<(), String> {
         .map_err(|e| format!("Couldn't save the theme in {} ({e}).", dir.display()))
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn download(url: &str) -> Result<String, ureq::Error> {
     let config = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20)));
     // The system's TLS and trusted roots (see Cargo.toml); Linux keeps rustls' defaults.
@@ -153,6 +155,12 @@ fn download(url: &str) -> Result<String, ureq::Error> {
     );
     let agent: ureq::Agent = config.build().into();
     agent.get(url).call()?.body_mut().read_to_string()
+}
+
+/// A browser build has no HTTP client here (and no theme folder to save into).
+#[cfg(target_family = "wasm")]
+fn download(_url: &str) -> Result<String, &'static str> {
+    Err("theme downloads need the desktop app")
 }
 
 fn invalid_file_name_char(c: char) -> bool {

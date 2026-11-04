@@ -38,6 +38,15 @@ pub fn schema_diagnostics() -> Vec<SchemaDiagnostic> {
     MERGED.diagnostics()
 }
 
+/// The file name Ghostty reads, for a config made in the browser playground.
+pub const CONFIG_FILE_NAME: &str = "config.ghostty";
+
+/// Where Ghostty reads its config, by platform (see `default_config_path`), for the playground's banner.
+pub const CONFIG_LOCATIONS: &[(&str, &str)] = &[
+    ("macOS", "~/Library/Application Support/com.mitchellh.ghostty/config.ghostty (or ~/.config/ghostty)"),
+    ("Linux", "~/.config/ghostty/config.ghostty (or $XDG_CONFIG_HOME/ghostty)"),
+];
+
 /// Ghostty's editor definition: line-based config, checked by Ghostty itself, reloaded via AppleScript.
 pub fn app() -> AppDefinition {
     AppDefinition {

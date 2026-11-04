@@ -35,6 +35,16 @@ pub fn schema_diagnostics() -> Vec<SchemaDiagnostic> {
     MERGED.diagnostics()
 }
 
+/// The file name Rio reads, for a config made in the browser playground.
+pub const CONFIG_FILE_NAME: &str = "config.toml";
+
+/// Where Rio reads its config, by platform (see `default_config_path`), for the playground's banner.
+pub const CONFIG_LOCATIONS: &[(&str, &str)] = &[
+    ("macOS", "~/.config/rio/config.toml"),
+    ("Linux", "~/.config/rio/config.toml (or $XDG_CONFIG_HOME/rio)"),
+    ("Windows", "%USERPROFILE%\\AppData\\Local\\rio\\config.toml"),
+];
+
 /// Rio's editor definition: TOML config, per-platform overrides, and Rio's own hot reload.
 pub fn app() -> AppDefinition {
     AppDefinition {

@@ -53,7 +53,8 @@ const CONTEXT: &str = "SettingsWindow";
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         // ⌘ on macOS, Ctrl elsewhere (KeyBinding::new can't parse `secondary-`); Ctrl+S saves everywhere.
-        KeyBinding::new(if cfg!(target_os = "macos") { "cmd-s" } else { "ctrl-s" }, Save, Some(CONTEXT)),
+        // A browser may run on any of them, so the web build takes ⌘S too.
+        KeyBinding::new(if cfg!(any(target_os = "macos", target_family = "wasm")) { "cmd-s" } else { "ctrl-s" }, Save, Some(CONTEXT)),
         KeyBinding::new("ctrl-s", Save, Some(CONTEXT)),
         KeyBinding::new("/", FocusSearch, Some("SettingsWindow && !Input")),
         KeyBinding::new(if cfg!(target_os = "macos") { "cmd-f" } else { "ctrl-f" }, FocusSearch, Some(CONTEXT)),
@@ -148,7 +149,10 @@ impl SettingsWindow {
             .collect();
         let scope_select = cx.new(|cx| SelectState::new(scope_items, Some(Default::default()), window, cx));
 
-        let mut fonts: Vec<SharedString> = cx.text_system().all_font_names().into_iter().filter(|f| !f.starts_with('.')).map(Into::into).collect();
+        // The fonts installed here. A config held in memory (the browser playground) is for another
+        // machine, so it gets no list and font fields take typed names.
+        let installed = if document.is_file() { cx.text_system().all_font_names() } else { Vec::new() };
+        let mut fonts: Vec<SharedString> = installed.into_iter().filter(|f| !f.starts_with('.')).map(Into::into).collect();
         fonts.sort_by_key(|f| f.to_lowercase());
         fonts.dedup();
 
@@ -280,7 +284,7 @@ impl SettingsWindow {
     }
 
     /// Re-reads the file and shows it, dropping unsaved edits.
-    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.store().state();
         self.banner = state.parse_error.clone().map(Banner::ParseError);
         self.editor.state = state;
@@ -431,6 +435,12 @@ impl SettingsWindow {
         let diff = Rc::new(line_diff(before, after, 2));
         let file = self.file_name();
         let this = cx.entity().downgrade();
+        let download = self.playground(cx).is_some();
+        let (title, action) = if download {
+            (format!("Download {file} with these changes?"), "Download")
+        } else {
+            (format!("Save changes to {file}?"), "Save")
+        };
         window.open_dialog(cx, move |dialog, _, cx| {
             let theme = cx.theme();
             let lines = diff.iter().map(|d| {
@@ -454,7 +464,7 @@ impl SettingsWindow {
             let save = this.clone();
             let changes = changes.clone();
             dialog
-                .title(format!("Save changes to {file}?"))
+                .title(title.clone())
                 .w(px(720.))
                 .child(
                     v_flex()
@@ -481,7 +491,7 @@ impl SettingsWindow {
                         .justify_end()
                         .gap_2()
                         .child(Button::new("cancel").outline().label("Cancel").on_click(|_, window, cx| window.close_dialog(cx)))
-                        .child(Button::new("confirm-save").primary().label("Save").on_click(move |_, window, cx| {
+                        .child(Button::new("confirm-save").primary().label(action).on_click(move |_, window, cx| {
                             window.close_dialog(cx);
                             let changes = (*changes).clone();
                             save.update(cx, |this, cx| this.confirm_save(changes, window, cx)).ok();
@@ -508,6 +518,9 @@ impl SettingsWindow {
                     this.errors.clear();
                     this.banner = None;
                     this.sync_all(window, cx);
+                    if result.after != result.before {
+                        this.download(cx);
+                    }
                     window.push_notification(Notification::success(result.note.unwrap_or_else(|| "Saved.".into())), cx);
                 }
                 Err(err) => this.show_save_error(err, window, cx),
@@ -603,6 +616,7 @@ impl SettingsWindow {
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let playground = self.playground(cx).is_some();
         let theme = cx.theme();
         let dirty = self.editor.dirty_count();
         let state = &self.editor.state;
@@ -659,12 +673,25 @@ impl SettingsWindow {
                         this.set_appearance(next, window, cx);
                     })),
             )
+            .when(playground, |row| {
+                row.child(
+                    Button::new("open")
+                        .outline()
+                        .icon(gpui_kit::assets::IconName::FolderOpen)
+                        .label("Open…")
+                        .disabled(self.busy)
+                        .tooltip("Edit a config file from your computer")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_file(window, cx))),
+                )
+            })
             .child(
                 Button::new("save")
                     .primary()
-                    .label("Save")
+                    .when(playground, |b| b.icon(gpui_kit::assets::IconName::Download))
+                    .label(if playground { "Download" } else { "Save" })
                     .disabled(dirty == 0 || self.busy)
-                    .tooltip("Save (⌘S)")
+                    // The web fonts have no ⌘ glyph, and a browser may not be on a Mac anyway.
+                    .tooltip(if playground { "Download the changed file" } else { "Save (⌘S)" })
                     // The count pill beside the label, in the button's own colors. It always takes its
                     // space (just transparent at 0), so the button and the header row never change width.
                     .child(
@@ -1036,7 +1063,11 @@ impl SettingsWindow {
                 .into_any_element(),
             ),
             Banner::ParseError(message) => Some(
-                Alert::error("parse-error", format!("{message} Fix the file in your editor; this window updates when it's valid again."))
+                Alert::error("parse-error", if self.document.is_file() {
+                    format!("{message} Fix the file in your editor; this window updates when it's valid again.")
+                } else {
+                    format!("{message} Fix the file in your editor, then open it again.")
+                })
                     .into_any_element(),
             ),
         }
@@ -1096,6 +1127,7 @@ impl Render for SettingsWindow {
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(header)
+            .children(self.render_playground_banner(cx))
             .child(
                 h_flex()
                     .flex_1()
