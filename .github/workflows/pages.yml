@@ -6,7 +6,8 @@ name: Pages
 # jsDelivr at startup and aren't part of the site.
 on:
   push:
-    branches: [main]
+    # TEMPORARY: feat/web-playground deploys a preview before merge. Remove before merging.
+    branches: [main, feat/web-playground]
     paths:
       - 'editor/gpui/**'
       - 'editor/schema/**'
