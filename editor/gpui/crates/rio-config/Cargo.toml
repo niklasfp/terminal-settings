@@ -12,10 +12,11 @@ toml_edit.workspace = true
 # TLS for theme downloads. macOS and Windows use the system's own TLS and certificate store
 # (`ring`, rustls' crypto, needs clang to build for Windows on Arm). Linux uses rustls, so the
 # binary doesn't depend on the distro's OpenSSL.
+# Not on the web: the browser playground has no theme downloads.
 [target.'cfg(target_os = "linux")'.dependencies]
 ureq = { workspace = true, features = ["rustls"] }
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(not(any(target_os = "linux", target_family = "wasm")))'.dependencies]
 ureq = { workspace = true, features = ["native-tls-no-default"] }
 
 [dev-dependencies]

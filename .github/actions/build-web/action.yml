@@ -1,0 +1,34 @@
+name: Build the web playground
+description: >
+  Builds editor/gpui/apps/settings-web for wasm32-unknown-unknown with tools/web/build.ts
+  (cargo + wasm-bindgen) into editor/gpui/target/web. Expects ./.github/actions/setup-gpui to have
+  run with the wasm32-unknown-unknown target, and Node 24 on PATH.
+
+runs:
+  using: composite
+  steps:
+    # wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock exactly.
+    - name: Find the wasm-bindgen version
+      id: bindgen
+      shell: bash
+      run: |
+        version="$(grep -A1 '^name = "wasm-bindgen"$' editor/gpui/Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Cache wasm-bindgen-cli
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cargo/bin/wasm-bindgen
+        key: wasm-bindgen-cli-${{ steps.bindgen.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install wasm-bindgen-cli
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ steps.bindgen.outputs.version }}
+      run: cargo install wasm-bindgen-cli --version "$VERSION" --locked
+
+    - name: Build
+      shell: bash
+      run: node editor/tools/web/build.ts

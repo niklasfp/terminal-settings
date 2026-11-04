@@ -6,6 +6,7 @@ use crate::controls::Control;
 use crate::dropdowns::{FontItem, ThemeItem};
 use crate::menus::{self, Appearance};
 use crate::model::{self, ANSI, Editor, Lock};
+use crate::playground::Handoff;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _, Theme, ThemeMode,
     WindowExt as _, h_flex, v_flex,
@@ -24,9 +25,8 @@ use gpui_kit::*;
 use gpui_kit::base::Selectable as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::Value;
-use settings_core::{AppDefinition, ConfigStore, DiffOp, FieldErrors, SaveError, Setting, SettingType, line_diff};
+use settings_core::{AppDefinition, DiffOp, Document, DocumentStore, FieldErrors, SaveError, Setting, SettingType, line_diff};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -54,11 +54,15 @@ const CONTEXT: &str = "SettingsWindow";
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         // ⌘ on macOS, Ctrl elsewhere (KeyBinding::new can't parse `secondary-`); Ctrl+S saves everywhere.
-        KeyBinding::new(if cfg!(target_os = "macos") { "cmd-s" } else { "ctrl-s" }, Save, Some(CONTEXT)),
+        // A browser may run on any of them, so the web build takes ⌘S too.
+        KeyBinding::new(if cfg!(any(target_os = "macos", target_family = "wasm")) { "cmd-s" } else { "ctrl-s" }, Save, Some(CONTEXT)),
         KeyBinding::new("ctrl-s", Save, Some(CONTEXT)),
         KeyBinding::new("/", FocusSearch, Some("SettingsWindow && !Input")),
         KeyBinding::new(if cfg!(target_os = "macos") { "cmd-f" } else { "ctrl-f" }, FocusSearch, Some(CONTEXT)),
     ]);
+    // A browser may be on a Mac, so the web build also takes ⌘F (it already has Ctrl+F).
+    #[cfg(target_family = "wasm")]
+    cx.bind_keys([KeyBinding::new("cmd-f", FocusSearch, Some(CONTEXT))]);
 }
 
 enum Banner {
@@ -74,11 +78,14 @@ fn platform_label(p: &str) -> &str {
     PLATFORMS.iter().find(|(id, _)| *id == p).map_or(p, |(_, l)| l)
 }
 
+/// The platform this runs on, for highlighting its badges; "" in a browser, which could be any.
 fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(target_os = "windows") {
         "windows"
+    } else if cfg!(target_family = "wasm") {
+        ""
     } else {
         "linux"
     }
@@ -106,7 +113,8 @@ fn tidy_path(p: &std::path::Path) -> String {
 
 pub struct SettingsWindow {
     pub(crate) app: &'static AppDefinition,
-    pub(crate) path: PathBuf,
+    /// The file being edited, or text held in memory.
+    pub(crate) document: Document,
     pub(crate) editor: Editor,
     pub(crate) controls: HashMap<String, Control>,
     /// Every font and theme dropdown lists these (shared, so each list is built once).
@@ -117,6 +125,9 @@ pub struct SettingsWindow {
     pub(crate) next_row_id: u64,
     pub(crate) subs: Vec<Subscription>,
     errors: FieldErrors,
+    /// Settings a save refused: their value is checked again on every edit, so the error goes
+    /// once it's fixed and comes back while it's still wrong.
+    recheck: std::collections::HashSet<String>,
     search: Entity<InputState>,
     search_text: HashMap<String, String>,
     active_group: String,
@@ -126,17 +137,19 @@ pub struct SettingsWindow {
     focus: FocusHandle,
     scroll: ScrollHandle,
     /// A preview or save is running in the background; edits are locked.
-    busy: bool,
+    pub(crate) busy: bool,
     /// Settings whose longer docs ("More") are open.
     expanded: std::collections::HashSet<String>,
     /// The latest theme choice per setting; a download only applies if it's still the latest.
     pub(crate) theme_requests: HashMap<String, u64>,
-    _poll: Task<()>,
+    /// Watches a file for outside edits, or (in the browser) for files dropped on the page.
+    _watch: Option<Task<()>>,
 }
 
 impl SettingsWindow {
-    pub fn new(app: &'static AppDefinition, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let state = ConfigStore::new(app, path.clone()).state();
+    pub fn new(app: &'static AppDefinition, document: impl Into<Document>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let document = document.into();
+        let state = DocumentStore::new(app, document.clone()).state();
         let schema = &app.schema;
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let scope_items: Vec<SharedString> = PLATFORMS
@@ -146,17 +159,22 @@ impl SettingsWindow {
             .collect();
         let scope_select = cx.new(|cx| SelectState::new(scope_items, Some(Default::default()), window, cx));
 
-        let mut fonts: Vec<SharedString> = cx.text_system().all_font_names().into_iter().filter(|f| !f.starts_with('.')).map(Into::into).collect();
+        // The fonts installed here. A config held in memory (the browser playground) is for another
+        // machine, so it gets no list and font fields take typed names.
+        let installed = if document.is_file() { cx.text_system().all_font_names() } else { Vec::new() };
+        let mut fonts: Vec<SharedString> = installed.into_iter().filter(|f| !f.starts_with('.')).map(Into::into).collect();
         fonts.sort_by_key(|f| f.to_lowercase());
         fonts.dedup();
 
-        let poll = cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(3)).await;
-                if this.update_in(cx, |this, window, cx| this.poll(window, cx)).is_err() {
-                    break;
+        let poll = document.is_file().then(|| {
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(3)).await;
+                    if this.update_in(cx, |this, window, cx| this.poll(window, cx)).is_err() {
+                        break;
+                    }
                 }
-            }
+            })
         });
 
         let appearance = cx
@@ -166,7 +184,7 @@ impl SettingsWindow {
 
         let mut this = Self {
             app,
-            path,
+            document,
             banner: state.parse_error.clone().map(Banner::ParseError),
             editor: Editor::new(schema, state),
             controls: HashMap::new(),
@@ -177,6 +195,7 @@ impl SettingsWindow {
             next_row_id: 0,
             subs: Vec::new(),
             errors: FieldErrors::new(),
+            recheck: Default::default(),
             search,
             search_text: schema.settings.iter().map(|s| (s.key.clone(), model::search_text(schema, s))).collect(),
             active_group: schema.groups.first().map(|g| g.id.clone()).unwrap_or_default(),
@@ -187,8 +206,11 @@ impl SettingsWindow {
             busy: false,
             expanded: Default::default(),
             theme_requests: HashMap::new(),
-            _poll: poll,
+            _watch: poll,
         };
+        if this._watch.is_none() {
+            this._watch = this.watch_drops(window, cx);
+        }
 
         this.apply_appearance(appearance, window, cx);
         for s in &schema.settings {
@@ -241,9 +263,23 @@ impl SettingsWindow {
     /// Records an edit from a widget. The widget already shows the value.
     pub(crate) fn edit(&mut self, key: &str, value: Value, _: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.editor.schema.find(key) else { return };
+        let error = if self.recheck.contains(key) { self.value_error(s, &value) } else { None };
         self.editor.edit(s, value);
-        self.errors.remove(key);
+        match error {
+            Some(message) => self.errors.insert(key.to_string(), message),
+            None => self.errors.remove(key),
+        };
         cx.notify();
+    }
+
+    /// What's wrong with one value on its own, as a save would say it. Checks the value only:
+    /// what depends on the rest of the file (or the terminal's own check) waits for the save.
+    fn value_error(&self, s: &'static Setting, value: &Value) -> Option<String> {
+        let change = settings_core::Change { setting: s, value: value.clone() };
+        match self.app.format.apply("", &[change], "") {
+            Err(settings_core::FormatError::Invalid(mut errors)) => errors.remove(&s.key),
+            _ => None,
+        }
     }
 
     /// Records an edit made outside the widget (e.g. a chosen file) and updates the widget.
@@ -260,6 +296,7 @@ impl SettingsWindow {
         }
         self.editor.reset(s);
         self.errors.remove(key);
+        self.recheck.remove(key);
         self.sync(key, window, cx);
         cx.notify();
     }
@@ -271,12 +308,12 @@ impl SettingsWindow {
         }
     }
 
-    fn store(&self) -> ConfigStore<'static> {
-        ConfigStore::new(self.app, self.path.clone())
+    fn store(&self) -> DocumentStore<'static> {
+        DocumentStore::new(self.app, self.document.clone())
     }
 
     /// Re-reads the file and shows it, dropping unsaved edits.
-    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.store().state();
         self.banner = state.parse_error.clone().map(Banner::ParseError);
         self.editor.state = state;
@@ -284,6 +321,7 @@ impl SettingsWindow {
         // A theme download finishing later must not bring a discarded choice back.
         self.theme_requests.values_mut().for_each(|n| *n += 1);
         self.errors.clear();
+        self.recheck.clear();
         self.sync_all(window, cx);
         cx.notify();
     }
@@ -318,8 +356,8 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn file_name(&self) -> String {
-        self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "the config file".into())
+    pub(crate) fn file_name(&self) -> String {
+        self.document.file_name().unwrap_or_else(|| "the config file".into())
     }
 
     /// Asks before unsaved changes are thrown away by closing or quitting. Returns true when there
@@ -360,19 +398,28 @@ impl SettingsWindow {
     /// the terminal (seconds, in the worst case). Edits are locked until it finishes.
     fn in_background<R: Send + 'static>(
         &mut self,
-        work: impl FnOnce(ConfigStore<'static>) -> R + Send + 'static,
+        work: impl FnOnce(&mut DocumentStore<'static>) -> R + Send + 'static,
         done: impl FnOnce(&mut Self, R, &mut Window, &mut Context<Self>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.busy = true;
         cx.notify();
-        let store = self.store();
-        let task = cx.background_executor().spawn(async move { work(store) });
+        let mut store = self.store();
+        let started = self.document.clone();
+        let task = cx.background_executor().spawn(async move {
+            let result = work(&mut store);
+            (result, store.document)
+        });
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let (result, document) = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.busy = false;
+                // Text in memory is the saved copy, so it changes with a save. A document opened
+                // meanwhile wins.
+                if this.document == started {
+                    this.document = document;
+                }
                 done(this, result, window, cx);
                 cx.notify();
             })
@@ -402,7 +449,7 @@ impl SettingsWindow {
                     this.sync_all(window, cx);
                     window.push_notification("Nothing to save", cx);
                 }
-                Ok(result) => this.open_save_dialog(&result.before, &result.after, pending, window, cx),
+                Ok(result) => this.open_save_dialog(&result.before, result.after.clone(), pending, window, cx),
                 Err(err) => this.show_save_error(err, window, cx),
             },
             window,
@@ -413,15 +460,18 @@ impl SettingsWindow {
     fn open_save_dialog(
         &mut self,
         before: &str,
-        after: &str,
+        after: String,
         changes: Vec<(String, Value)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let changes = Rc::new(changes);
-        let diff = Rc::new(line_diff(before, after, 2));
-        let file = self.file_name();
+        let diff = Rc::new(line_diff(before, &after, 2));
+        let after = Rc::new(after);
+        let title = format!("Save changes to {}?", self.file_name());
         let this = cx.entity().downgrade();
+        // In the browser the file can't be written, so Save hands it over: a download, or a copy.
+        let playground = self.playground(cx).is_some();
         window.open_dialog(cx, move |dialog, _, cx| {
             let theme = cx.theme();
             let lines = diff.iter().map(|d| {
@@ -442,10 +492,20 @@ impl SettingsWindow {
                     .child(div().w_10().flex_shrink_0().pr_2().text_right().text_color(theme.muted_foreground).child(number))
                     .child(div().whitespace_nowrap().child(if d.op == DiffOp::Gap { String::new() } else { format!("{marker} {}", d.text) }))
             });
-            let save = this.clone();
-            let changes = changes.clone();
+            let confirm = |how: Option<Handoff>| {
+                let (this, changes, after) = (this.clone(), changes.clone(), after.clone());
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    window.close_dialog(cx);
+                    let changes = (*changes).clone();
+                    this.update(cx, |this, cx| match how {
+                        Some(how) => this.hand_off(how, changes, &after, window, cx),
+                        None => this.confirm_save(changes, None, window, cx),
+                    })
+                    .ok();
+                }
+            };
             dialog
-                .title(format!("Save changes to {file}?"))
+                .title(title.clone())
                 .w(px(720.))
                 .child(
                     v_flex()
@@ -472,17 +532,30 @@ impl SettingsWindow {
                         .justify_end()
                         .gap_2()
                         .child(Button::new("cancel").outline().label("Cancel").on_click(|_, window, cx| window.close_dialog(cx)))
-                        .child(Button::new("confirm-save").primary().label("Save").on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                            let changes = (*changes).clone();
-                            save.update(cx, |this, cx| this.confirm_save(changes, window, cx)).ok();
-                        })),
+                        .when(playground, |row| {
+                            row.child(
+                                Button::new("confirm-copy")
+                                    .outline()
+                                    .icon(gpui_kit::assets::IconName::Copy)
+                                    .label("Copy")
+                                    .on_click(confirm(Some(Handoff::Copy))),
+                            )
+                        })
+                        .child(if playground {
+                            Button::new("confirm-save")
+                                .primary()
+                                .icon(gpui_kit::assets::IconName::Download)
+                                .label("Download")
+                                .on_click(confirm(Some(Handoff::Download)))
+                        } else {
+                            Button::new("confirm-save").primary().label("Save").on_click(confirm(None))
+                        }),
                 )
         });
     }
 
-    /// Saves exactly the changes the dialog showed.
-    fn confirm_save(&mut self, changes: Vec<(String, Value)>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Saves exactly the changes the dialog showed. `note` replaces the app's after-save message.
+    pub(crate) fn confirm_save(&mut self, changes: Vec<(String, Value)>, note: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -497,9 +570,11 @@ impl SettingsWindow {
                     // Only what was written; anything edited since stays pending.
                     this.editor.clear_saved(&saved);
                     this.errors.clear();
+                    this.recheck.clear();
                     this.banner = None;
                     this.sync_all(window, cx);
-                    window.push_notification(Notification::success(result.note.unwrap_or_else(|| "Saved.".into())), cx);
+                    let note = note.or(result.note).unwrap_or_else(|| "Saved.".into());
+                    window.push_notification(Notification::success(note), cx);
                 }
                 Err(err) => this.show_save_error(err, window, cx),
             },
@@ -516,6 +591,7 @@ impl SettingsWindow {
                 for (key, message) in errors {
                     if self.editor.schema.find(&key).is_some() {
                         first.get_or_insert(key.clone());
+                        self.recheck.insert(key.clone());
                         self.errors.insert(key, message);
                     } else {
                         window.push_notification(Notification::error(message), cx);
@@ -573,7 +649,7 @@ impl SettingsWindow {
         let lines = [
             format!("Version {}", crate::VERSION),
             format!("Settings schema from {} {}", self.app.terminal, self.editor.schema.revision.chars().take(7).collect::<String>()),
-            format!("Editing {}", tidy_path(&self.path)),
+            format!("Editing {}", tidy_path(&self.document.path())),
         ];
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;
@@ -594,6 +670,7 @@ impl SettingsWindow {
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let playground = self.playground(cx).is_some();
         let theme = cx.theme();
         let dirty = self.editor.dirty_count();
         let state = &self.editor.state;
@@ -650,12 +727,24 @@ impl SettingsWindow {
                         this.set_appearance(next, window, cx);
                     })),
             )
+            .when(playground, |row| {
+                row.child(
+                    Button::new("open")
+                        .outline()
+                        .icon(gpui_kit::assets::IconName::FolderOpen)
+                        .label("Open…")
+                        .disabled(self.busy)
+                        .tooltip("Edit a config file from your computer")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_file(window, cx))),
+                )
+            })
             .child(
                 Button::new("save")
                     .primary()
                     .label("Save")
                     .disabled(dirty == 0 || self.busy)
-                    .tooltip("Save (⌘S)")
+                    // The web fonts have no ⌘ glyph, and a browser may not be on a Mac anyway.
+                    .tooltip(if playground { "Download or copy the changed file" } else { "Save (⌘S)" })
                     // The count pill beside the label, in the button's own colors. It always takes its
                     // space (just transparent at 0), so the button and the header row never change width.
                     .child(
@@ -1027,7 +1116,11 @@ impl SettingsWindow {
                 .into_any_element(),
             ),
             Banner::ParseError(message) => Some(
-                Alert::error("parse-error", format!("{message} Fix the file in your editor; this window updates when it's valid again."))
+                Alert::error("parse-error", if self.document.is_file() {
+                    format!("{message} Fix the file in your editor; this window updates when it's valid again.")
+                } else {
+                    format!("{message} Fix the file in your editor, then open it again.")
+                })
                     .into_any_element(),
             ),
         }
@@ -1087,6 +1180,7 @@ impl Render for SettingsWindow {
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(header)
+            .children(self.render_playground_banner(cx))
             .child(
                 h_flex()
                     .flex_1()

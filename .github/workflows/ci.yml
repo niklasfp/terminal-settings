@@ -51,6 +51,32 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  # The browser playground. Its UI tests run natively above; this keeps the wasm build itself from
+  # breaking unnoticed. The Pages workflow deploys the same build from main.
+  web:
+    name: Web playground build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-gpui
+        with:
+          cache-key: web
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Lint
+        working-directory: editor/gpui
+        run: cargo clippy -p settings-web --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - uses: ./.github/actions/build-web
+
   build:
     name: Release build ${{ matrix.app }} (${{ matrix.rid }})
     strategy:

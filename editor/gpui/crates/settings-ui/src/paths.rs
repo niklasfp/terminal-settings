@@ -85,6 +85,10 @@ impl SettingsWindow {
     /// The field's trailing buttons for its current `text`: a warning or "Show in Finder", then
     /// "Choose…".
     pub(crate) fn path_suffix(&self, s: &Setting, kind: PathKind, text: &str, disabled: bool, cx: &mut Context<Self>) -> AnyElement {
+        if !self.document.is_file() {
+            // A config held in memory is for another machine: its paths can't be checked or chosen here.
+            return div().into_any_element();
+        }
         let key = s.key.clone();
         let id = |part: &str| ElementId::Name(format!("{}:{part}", s.key).into());
         let path = as_path(text);
@@ -128,6 +132,9 @@ impl SettingsWindow {
 
     /// Wraps a path setting's control so files and folders dropped from Finder land in it.
     pub(crate) fn path_drop_target(&self, s: &Setting, control: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        if !self.document.is_file() {
+            return control;
+        }
         let key = s.key.clone();
         let highlight = cx.theme().drop_target;
         div()

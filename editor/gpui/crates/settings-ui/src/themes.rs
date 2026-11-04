@@ -13,7 +13,7 @@ impl SettingsWindow {
     /// Loads the theme list in the background, then refreshes every theme dropdown.
     pub(crate) fn load_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(list) = self.app.themes else { return };
-        let path = self.path.clone();
+        let path = self.document.path();
         let task = cx.background_executor().spawn(async move { list(&path) });
         cx.spawn_in(window, async move |this, cx| {
             let themes = task.await;
@@ -89,23 +89,35 @@ impl SettingsWindow {
             self.edit(key, Value::String(name), window, cx);
             return;
         }
-        let Some(install) = self.app.install_theme else { return };
-        let path = self.path.clone();
+        // Natively the theme is installed into the themes folder. In the browser its file is
+        // downloaded for the user to put there; the result is the downloaded file's name.
+        let task: Task<Result<Option<String>, String>> = match (self.playground(cx).and_then(|p| p.install_theme), self.app.install_theme) {
+            (Some(download), _) => {
+                let download = download(&name);
+                cx.spawn(async move |_, _| download.await.map(Some))
+            }
+            (None, Some(install)) => {
+                let path = self.document.path();
+                let name = name.clone();
+                cx.background_executor().spawn(async move { install(&path, &name).map(|()| None) })
+            }
+            (None, None) => return,
+        };
         let key = key.to_string();
         window.push_notification(format!("Downloading “{name}”…"), cx);
-        let task = cx.background_executor().spawn({
-            let name = name.clone();
-            async move { install(&path, &name) }
-        });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             this.update_in(cx, |this, window, cx| {
                 // A choice made while this downloaded wins; the file is installed either way.
                 let current = this.theme_requests.get(&key) == Some(&request);
                 match result {
-                    Ok(()) => {
+                    Ok(downloaded) => {
                         if current {
                             this.edit(&key, Value::String(name), window, cx);
+                        }
+                        if let Some(file) = downloaded {
+                            let message = format!("Downloaded {file}. Put it in the themes folder next to {}.", this.file_name());
+                            window.push_notification(Notification::success(message), cx);
                         }
                         this.load_themes(window, cx);
                     }

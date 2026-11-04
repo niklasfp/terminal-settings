@@ -2,7 +2,7 @@
 //! state (inputs, sliders, pickers); the value itself always lives in the `Editor` model.
 //! `sync` pushes the model's value into the widgets; widget events go back through `on_input`.
 
-use crate::dropdowns::{Chooser, FontItem, ThemeItem, names};
+use crate::dropdowns::{ChoiceEvent, Chooser, FontItem, ThemeItem, names};
 use crate::paths::PathKind;
 use crate::model::{plain, same};
 use settings_core::{format_number, humanize};
@@ -237,16 +237,26 @@ impl SettingsWindow {
     /// Creates the control for a setting and subscribes to its widget events.
     pub(crate) fn create_control(&mut self, s: &'static Setting, window: &mut Window, cx: &mut Context<Self>) -> Control {
         let key = s.key.clone();
+        // Without a list to choose from, a font or theme is typed: as text, or as a list of entries.
+        // A config held in memory is for another machine, so the fonts installed here don't apply;
+        // an app may have no theme list.
+        let (ty, typed) = match s.ty {
+            SettingType::Font if !self.document.is_file() => (SettingType::String, Some("Font name")),
+            SettingType::Fonts if !self.document.is_file() => (SettingType::Strings, Some("Add a font…")),
+            SettingType::Theme if self.app.themes.is_none() => (SettingType::String, Some("Theme name")),
+            ty => (ty, None),
+        };
         let text_input = |window: &mut Window, cx: &mut Context<Self>| {
-            let ph = placeholder(s);
+            // The overlay's own placeholder still wins (e.g. "Same as font-family").
+            let ph = s.placeholder.clone().or_else(|| typed.map(String::from)).unwrap_or_else(|| placeholder(s));
             cx.new(|cx| InputState::new(window, cx).placeholder(ph))
         };
-        match s.ty {
+        match ty {
             SettingType::Flags if s.values.as_ref().is_some_and(|v| v.len() > MAX_FLAG_CHECKBOXES) => {
                 let order: Rc<Vec<SharedString>> = Rc::new(s.values.iter().flatten().map(SharedString::from).collect());
                 let chooser = Chooser::new(true, false, window, cx);
                 let flags = order.clone();
-                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<SharedString>>, window, cx| {
+                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<SharedString>, window, cx| {
                     let ComboboxEvent::Change(on) = ev else { return };
                     // The file lists flags in the schema's order, whatever order they were ticked in.
                     let on: Vec<Value> = flags.iter().filter(|f| on.contains(f)).map(|f| Value::String(f.to_string())).collect();
@@ -257,7 +267,7 @@ impl SettingsWindow {
             }
             SettingType::Theme => {
                 let chooser = Chooser::new(false, true, window, cx);
-                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<ThemeItem>>, window, cx| {
+                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<ThemeItem>, window, cx| {
                     let ComboboxEvent::Change(names) = ev else { return };
                     this.choose_theme(&key, names.first().map(ToString::to_string), window, cx);
                 });
@@ -283,7 +293,7 @@ impl SettingsWindow {
                 let multiple = s.ty == SettingType::Fonts;
                 // Items arrive with the first sync, which also adds the value's fonts that aren't installed.
                 let chooser = Chooser::new(multiple, true, window, cx);
-                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<FontItem>>, window, cx| {
+                let sub = cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<FontItem>, window, cx| {
                     let ComboboxEvent::Change(fonts) = ev else { return };
                     let mut fonts = fonts.iter().map(|f| Value::String(f.to_string()));
                     let value = if multiple { Value::Array(fonts.collect()) } else { fonts.next().unwrap_or(Value::Null) };
@@ -490,6 +500,15 @@ impl SettingsWindow {
         }
     }
 
+    /// Drops list entries still being typed (opening another file must not carry them over).
+    pub(crate) fn clear_pending_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let inputs: Vec<Entity<InputState>> =
+            self.controls.values().filter_map(|c| if let Control::Chips(input) = c { Some(input.clone()) } else { None }).collect();
+        for input in inputs {
+            input.update(cx, |state, cx| state.set_value("", window, cx));
+        }
+    }
+
     pub(crate) fn add_chip(&mut self, key: &str, text: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.editor.schema.find(key) else { return };
         let mut items = self.editor.current_value(s).as_array().cloned().unwrap_or_default();
@@ -514,10 +533,10 @@ impl SettingsWindow {
         for f in s.fields.as_deref().unwrap_or_default() {
             let initial = record.get(&f.key).map(plain).unwrap_or_default();
             let key = key.to_string();
-            if f.ty == SettingType::Font {
+            if f.ty == SettingType::Font && self.document.is_file() {
                 let mut chooser: Chooser<FontItem> = Chooser::new(false, true, window, cx);
                 chooser.sync(&self.fonts.clone(), &names(&Value::String(initial)), &[], window, cx);
-                subs.push(cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ComboboxEvent<Vec<FontItem>>, window, cx| {
+                subs.push(cx.subscribe_in(&chooser.state, window, move |this, _, ev: &ChoiceEvent<FontItem>, window, cx| {
                     if matches!(ev, ComboboxEvent::Change(_)) {
                         this.on_input(&key, window, cx);
                     }

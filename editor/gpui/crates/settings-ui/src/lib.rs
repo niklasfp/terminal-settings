@@ -7,6 +7,7 @@ pub mod menus;
 mod model;
 mod dropdowns;
 mod paths;
+pub mod playground;
 mod themes;
 pub mod view;
 
@@ -91,6 +92,46 @@ pub fn run(app: AppDefinition, brand: Brand) {
             }
         })
         .detach();
+    });
+}
+
+/// The fonts a browser build draws with: the web text system starts with none.
+pub struct WebFonts {
+    /// TTF/OTF bytes (GPUI reads neither WOFF nor WOFF2).
+    pub files: Vec<Vec<u8>>,
+    /// The UI and the monospace family among them.
+    pub sans: &'static str,
+    pub mono: &'static str,
+}
+
+/// Runs the settings window in the page (the browser playground): one full-page window over a
+/// config held in memory, starting empty. No arguments, menus, file polling or saved appearance;
+/// `app` is the browser's definition (e.g. `rio_config::browser_app()`, built on
+/// `AppDefinition::for_browser`), without what needs the system.
+#[cfg(target_family = "wasm")]
+pub fn run_web(app: AppDefinition, brand: Brand, playground: playground::Playground, fonts: WebFonts) {
+    let app: &'static AppDefinition = Box::leak(Box::new(app));
+    let document = settings_core::Document::memory(playground.file_name, "");
+    gpui_kit::application().with_assets(assets::AppAssets { logo: brand.logo }).run(move |cx| {
+        let files = fonts.files.into_iter().map(std::borrow::Cow::Owned).collect();
+        if let Err(err) = cx.text_system().add_fonts(files) {
+            eprintln!("Couldn't load the fonts: {err}");
+        }
+        gpui_kit::init(cx);
+        install_brand_theme(&brand, cx);
+        Theme::update(cx, |theme| {
+            theme.font_family = fonts.sans.into();
+            theme.mono_font_family = fonts.mono.into();
+        });
+        cx.set_global(LogoPath(assets::logo_path(brand.logo)));
+        cx.set_global(playground);
+        view::bind_keys(cx);
+        let options = WindowOptions {
+            titlebar: Some(TitlebarOptions { title: Some(format!("{} playground", app.schema.title).into()), ..Default::default() }),
+            ..Default::default()
+        };
+        gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| view::SettingsWindow::new(app, document, window, cx)))
+            .expect("failed to open the settings window");
     });
 }
 

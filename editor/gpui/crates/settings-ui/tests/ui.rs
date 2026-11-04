@@ -578,3 +578,28 @@ fn action_suggestions_complete_a_ghostty_key_binding(cx: &mut TestAppContext) {
     assert_eq!(read(&f.path), "keybind = super+n=new_window\n");
 }
 
+
+#[gpui_kit::test]
+fn a_value_a_save_refused_is_checked_again_while_it_is_edited(cx: &mut TestAppContext) {
+    let f = open(cx, "");
+    let key = "scrollback-history-limit";
+    let error = |f: &Fixture, cx: &mut TestAppContext| cx.update(|cx| f.view.read(cx).error(key).map(str::to_string));
+    let type_in = |f: &Fixture, cx: &mut TestAppContext, text: &'static str| {
+        f.ui(cx, move |window, cx| {
+            window.click(format!("{key}:input"), cx);
+            window.press("secondary-a", cx);
+            window.input(text, cx);
+        })
+    };
+    type_in(&f, cx, "-5");
+    assert_eq!(error(&f, cx), None, "nothing is checked before a save");
+    f.ui(cx, |window, cx| window.click("save", cx));
+    assert_eq!(error(&f, cx).as_deref(), Some("Must be at least 0."));
+
+    type_in(&f, cx, "-6");
+    assert_eq!(error(&f, cx).as_deref(), Some("Must be at least 0."), "still wrong, still shown");
+    type_in(&f, cx, "50");
+    assert_eq!(error(&f, cx), None, "fixed");
+    type_in(&f, cx, "-1");
+    assert_eq!(error(&f, cx).as_deref(), Some("Must be at least 0."), "and back while it's wrong again");
+}

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terminal settings playground</title>
+  <link rel="icon" href="data:,">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; font: 15px/1.5 system-ui, sans-serif; background: #f6f6f7; color: #1d1d1f; }
+    @media (prefers-color-scheme: dark) { html, body { background: #1c1c1e; color: #f2f2f7; } a { color: #8ab4ff; } }
+    main { max-width: 34rem; margin: 12vh auto 0; padding: 0 1.5rem; }
+    h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+    ul { padding: 0; list-style: none; display: flex; gap: 1rem; }
+    li a { display: block; padding: .75rem 1.25rem; border: 1px solid currentColor; border-radius: .6rem; text-decoration: none; font-weight: 600; }
+    #status { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 1.5rem; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main id="landing" hidden>
+    <h1>Terminal settings playground</h1>
+    <p>Try the Rio or Ghostty settings editor in your browser. Open or drop your config file, or start
+      from an empty one, change settings, and save: the edited file downloads, or copies to paste
+      in place. Nothing is saved to your terminal.</p>
+    <ul>
+      <li><a href="?app=rio">Rio</a></li>
+      <li><a href="?app=ghostty">Ghostty</a></li>
+    </ul>
+    <p><small>Needs a desktop browser with WebGPU or WebGL2.
+      <a href="https://github.com/niklasfp/terminal-settings">Source and desktop apps</a></small></p>
+  </main>
+  <div id="status" hidden>Loading the editor…</div>
+  <script type="module">
+    const app = new URLSearchParams(location.search).get("app");
+    const status = document.getElementById("status");
+    if (app !== "rio" && app !== "ghostty") {
+      document.getElementById("landing").hidden = false;
+    } else if (!navigator.gpu && !document.createElement("canvas").getContext("webgl2")) {
+      status.hidden = false;
+      status.textContent = "This browser has neither WebGPU nor WebGL2, which the editor needs to draw. Try a current desktop Chrome, Firefox or Safari.";
+    } else {
+      status.hidden = false;
+      const started = performance.now();
+      try {
+        const { default: init } = await import("./settings_web.js");
+        await init();
+        console.info(`settings-web started in ${Math.round(performance.now() - started)} ms`);
+      } catch (error) {
+        status.textContent = `The editor couldn't start: ${error}`;
+        throw error;
+      }
+    }
+  </script>
+</body>
+</html>

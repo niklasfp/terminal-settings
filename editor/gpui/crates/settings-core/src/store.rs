@@ -71,7 +71,257 @@ static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 const BOM: char = '\u{FEFF}';
 
-/// Reads and writes one config file through the app's format.
+/// The text-level core of the save flow: parses, previews and saves config text held in memory.
+/// It never touches the filesystem; `ConfigStore` wraps it for a file on disk, and an in-memory
+/// `Document` uses it directly.
+pub struct TextStore<'a> {
+    pub app: &'a AppDefinition,
+    /// Where the text belongs: shown in the UI and passed to `AppDefinition::validate`
+    /// (relative includes resolve against its folder). Never read or written here.
+    pub path: PathBuf,
+}
+
+impl<'a> TextStore<'a> {
+    pub fn new(app: &'a AppDefinition, path: impl Into<PathBuf>) -> Self {
+        Self {
+            app,
+            path: path.into(),
+        }
+    }
+
+    /// What the UI shows for this text (without a byte-order mark).
+    pub fn state(&self, text: &str) -> ConfigState {
+        let mut state = ConfigState {
+            path: self.path.clone(),
+            target: self.path.clone(),
+            exists: true,
+            version: version_of(text),
+            values: Values::new(),
+            raw: BTreeMap::new(),
+            notices: Vec::new(),
+            parse_error: None,
+        };
+        match self.app.format.parse(text, &self.app.schema) {
+            Ok(parsed) => {
+                state.values = parsed.values;
+                state.raw = parsed.raw;
+                state.notices = parsed.notices;
+            }
+            Err(e) => state.parse_error = Some(e),
+        }
+        state
+    }
+
+    /// Applies changes (key -> value, `Null` removes) to `before`. `version` is the version the UI
+    /// loaded; `None` skips the conflict check. The result's version is that of `before`.
+    pub fn apply(
+        &self,
+        before: &str,
+        version: Option<&str>,
+        scope: &str,
+        changes: &[(String, Value)],
+    ) -> Result<ApplyResult, SaveError> {
+        if version.is_some_and(|v| v != version_of(before)) {
+            return Err(SaveError::Conflict);
+        }
+        if !scope.is_empty() && !self.app.scopes.contains(&scope) {
+            let mut errors = FieldErrors::new();
+            errors.insert(String::new(), format!("Unknown platform '{scope}'."));
+            return Err(SaveError::Invalid(errors));
+        }
+
+        let mut errors = FieldErrors::new();
+        let mut accepted = Vec::new();
+        for (key, value) in changes {
+            let Some(setting) = self.app.schema.find(key) else {
+                errors.insert(key.clone(), "Unknown setting.".to_string());
+                continue;
+            };
+            if !scope.is_empty() && !setting.overridable {
+                errors.insert(
+                    key.clone(),
+                    "This setting can't be overridden per platform.".to_string(),
+                );
+                continue;
+            }
+            accepted.push(Change {
+                setting,
+                value: value.clone(),
+            });
+        }
+
+        let after = match self.app.format.apply(before, &accepted, scope) {
+            Ok(after) => match_line_endings(before, &after),
+            Err(FormatError::Parse(message)) => return Err(SaveError::Parse(message)),
+            Err(FormatError::Invalid(invalid)) => {
+                // Report value errors together with unknown or locked keys.
+                errors.extend(invalid);
+                return Err(SaveError::Invalid(errors));
+            }
+        };
+        if !errors.is_empty() {
+            return Err(SaveError::Invalid(errors));
+        }
+        if after != before
+            && let Some(validate) = self.app.validate
+            && let Some(invalid) = validate(&after, &self.app.schema, &self.path)
+            && !invalid.is_empty()
+        {
+            return Err(SaveError::Invalid(invalid));
+        }
+        Ok(ApplyResult {
+            before: before.to_string(),
+            after,
+            version: version_of(before),
+            note: None,
+        })
+    }
+
+    /// `apply`, then takes the new text as saved: when something changed, the result carries the
+    /// version of `after` and the app's after-save note. The caller keeps `after` as the new text.
+    pub fn save(
+        &self,
+        before: &str,
+        version: Option<&str>,
+        scope: &str,
+        changes: &[(String, Value)],
+    ) -> Result<ApplyResult, SaveError> {
+        let result = self.apply(before, version, scope, changes)?;
+        Ok(self.saved(result))
+    }
+
+    /// Marks an applied result as written: the version of `after`, and the after-save note.
+    fn saved(&self, mut result: ApplyResult) -> ApplyResult {
+        if result.after != result.before {
+            result.version = version_of(&result.after);
+            result.note = (self.app.after_save)();
+        }
+        result
+    }
+}
+
+/// The config being edited: a file on disk, or text held in memory (where there is no file to
+/// write, e.g. in a browser).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Document {
+    /// Read and written through `ConfigStore`.
+    File(PathBuf),
+    /// Text without a byte-order mark; `bom` says whether the original had one.
+    /// `name` is what the UI shows and what the text would be saved as.
+    Memory { name: String, text: String, bom: bool },
+}
+
+impl From<PathBuf> for Document {
+    fn from(path: PathBuf) -> Self {
+        Self::File(path)
+    }
+}
+
+impl From<&Path> for Document {
+    fn from(path: &Path) -> Self {
+        Self::File(path.to_path_buf())
+    }
+}
+
+impl Document {
+    /// In-memory text called `name`. A leading byte-order mark is stripped and remembered.
+    pub fn memory(name: impl Into<String>, text: impl Into<String>) -> Self {
+        let text = text.into();
+        let (text, bom) = match text.strip_prefix(BOM) {
+            Some(rest) => (rest.to_string(), true),
+            None => (text, false),
+        };
+        Self::Memory {
+            name: name.into(),
+            text,
+            bom,
+        }
+    }
+
+    /// The file's path, or the in-memory document's name as a path.
+    pub fn path(&self) -> PathBuf {
+        match self {
+            Self::File(path) => path.clone(),
+            Self::Memory { name, .. } => PathBuf::from(name),
+        }
+    }
+
+    /// The file name, e.g. "config.toml".
+    pub fn file_name(&self) -> Option<String> {
+        match self {
+            Self::File(path) => path.file_name().map(|n| n.to_string_lossy().into_owned()),
+            Self::Memory { name, .. } => Some(name.clone()),
+        }
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self, Self::File(_))
+    }
+
+    /// The in-memory contents as they'd be written (with the byte-order mark if the original had
+    /// one); `None` for a file.
+    pub fn contents(&self) -> Option<String> {
+        match self {
+            Self::File(_) => None,
+            Self::Memory { text, bom, .. } => Some(if *bom { format!("{BOM}{text}") } else { text.clone() }),
+        }
+    }
+}
+
+/// The store for a `Document`: `ConfigStore` for a file, `TextStore` for text in memory.
+/// Saving in memory replaces the document's text.
+pub struct DocumentStore<'a> {
+    pub app: &'a AppDefinition,
+    pub document: Document,
+}
+
+impl<'a> DocumentStore<'a> {
+    pub fn new(app: &'a AppDefinition, document: impl Into<Document>) -> Self {
+        Self {
+            app,
+            document: document.into(),
+        }
+    }
+
+    pub fn state(&self) -> ConfigState {
+        match &self.document {
+            Document::File(path) => ConfigStore::new(self.app, path.clone()).state(),
+            Document::Memory { name, text, .. } => TextStore::new(self.app, name.clone()).state(text),
+        }
+    }
+
+    pub fn apply(
+        &self,
+        version: Option<&str>,
+        scope: &str,
+        changes: &[(String, Value)],
+    ) -> Result<ApplyResult, SaveError> {
+        match &self.document {
+            Document::File(path) => ConfigStore::new(self.app, path.clone()).apply(version, scope, changes),
+            Document::Memory { name, text, .. } => {
+                TextStore::new(self.app, name.clone()).apply(text, version, scope, changes)
+            }
+        }
+    }
+
+    pub fn save(
+        &mut self,
+        version: Option<&str>,
+        scope: &str,
+        changes: &[(String, Value)],
+    ) -> Result<ApplyResult, SaveError> {
+        match &mut self.document {
+            Document::File(path) => ConfigStore::new(self.app, path.clone()).save(version, scope, changes),
+            Document::Memory { name, text, .. } => {
+                let result = TextStore::new(self.app, name.clone()).save(text, version, scope, changes)?;
+                text.clone_from(&result.after);
+                Ok(result)
+            }
+        }
+    }
+}
+
+/// Reads and writes one config file through the app's format (`TextStore` does the text work).
 /// Writes are atomic, keep a `.bak`, and go through symlinks to their target.
 pub struct ConfigStore<'a> {
     pub app: &'a AppDefinition,
@@ -84,6 +334,10 @@ impl<'a> ConfigStore<'a> {
             app,
             path: path.into(),
         }
+    }
+
+    fn text_store(&self) -> TextStore<'a> {
+        TextStore::new(self.app, self.path.clone())
     }
 
     pub fn target_path(&self) -> PathBuf {
@@ -116,31 +370,21 @@ impl<'a> ConfigStore<'a> {
     }
 
     pub fn state(&self) -> ConfigState {
-        let (text, read_error) = match self.read() {
-            Ok((text, _)) => (text, None),
-            Err(e) => (String::new(), Some(e)),
+        let mut state = match self.read() {
+            Ok((text, _)) => self.text_store().state(&text),
+            Err(e) => ConfigState {
+                path: self.path.clone(),
+                target: self.path.clone(),
+                exists: true,
+                version: version_of(""),
+                values: Values::new(),
+                raw: BTreeMap::new(),
+                notices: Vec::new(),
+                parse_error: Some(e),
+            },
         };
-        let mut state = ConfigState {
-            path: self.path.clone(),
-            target: self.target_path(),
-            exists: self.path.exists(),
-            version: version_of(&text),
-            values: Values::new(),
-            raw: BTreeMap::new(),
-            notices: Vec::new(),
-            parse_error: read_error,
-        };
-        if state.parse_error.is_some() {
-            return state;
-        }
-        match self.app.format.parse(&text, &self.app.schema) {
-            Ok(parsed) => {
-                state.values = parsed.values;
-                state.raw = parsed.raw;
-                state.notices = parsed.notices;
-            }
-            Err(e) => state.parse_error = Some(e),
-        }
+        state.target = self.target_path();
+        state.exists = self.path.exists();
         state
     }
 
@@ -153,71 +397,7 @@ impl<'a> ConfigStore<'a> {
         changes: &[(String, Value)],
     ) -> Result<ApplyResult, SaveError> {
         let (before, _) = self.read().map_err(SaveError::Io)?;
-        self.apply_to(before, version, scope, changes)
-    }
-
-    fn apply_to(
-        &self,
-        before: String,
-        version: Option<&str>,
-        scope: &str,
-        changes: &[(String, Value)],
-    ) -> Result<ApplyResult, SaveError> {
-        if version.is_some_and(|v| v != version_of(&before)) {
-            return Err(SaveError::Conflict);
-        }
-        if !scope.is_empty() && !self.app.scopes.contains(&scope) {
-            let mut errors = FieldErrors::new();
-            errors.insert(String::new(), format!("Unknown platform '{scope}'."));
-            return Err(SaveError::Invalid(errors));
-        }
-
-        let mut errors = FieldErrors::new();
-        let mut accepted = Vec::new();
-        for (key, value) in changes {
-            let Some(setting) = self.app.schema.find(key) else {
-                errors.insert(key.clone(), "Unknown setting.".to_string());
-                continue;
-            };
-            if !scope.is_empty() && !setting.overridable {
-                errors.insert(
-                    key.clone(),
-                    "This setting can't be overridden per platform.".to_string(),
-                );
-                continue;
-            }
-            accepted.push(Change {
-                setting,
-                value: value.clone(),
-            });
-        }
-
-        let after = match self.app.format.apply(&before, &accepted, scope) {
-            Ok(after) => match_line_endings(&before, &after),
-            Err(FormatError::Parse(message)) => return Err(SaveError::Parse(message)),
-            Err(FormatError::Invalid(invalid)) => {
-                // Report value errors together with unknown or locked keys.
-                errors.extend(invalid);
-                return Err(SaveError::Invalid(errors));
-            }
-        };
-        if !errors.is_empty() {
-            return Err(SaveError::Invalid(errors));
-        }
-        if after != before
-            && let Some(validate) = self.app.validate
-            && let Some(invalid) = validate(&after, &self.app.schema, &self.path)
-            && !invalid.is_empty()
-        {
-            return Err(SaveError::Invalid(invalid));
-        }
-        let version = version_of(&before);
-        Ok(ApplyResult {
-            before,
-            after,
-            version,
-            note: None,
-        })
+        self.text_store().apply(&before, version, scope, changes)
     }
 
     /// `apply`, then write atomically when something changed.
@@ -231,7 +411,8 @@ impl<'a> ConfigStore<'a> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (before, bom) = self.read().map_err(SaveError::Io)?;
-        let mut result = self.apply_to(before, version, scope, changes)?;
+        let core = self.text_store();
+        let result = core.apply(&before, version, scope, changes)?;
         if result.after == result.before {
             return Ok(result);
         }
@@ -241,9 +422,7 @@ impl<'a> ConfigStore<'a> {
         }
         self.write_atomically(&result.before, &result.after, bom)
             .map_err(|e| SaveError::Io(format!("Couldn't save {}: {e}", self.path.display())))?;
-        result.version = version_of(&result.after);
-        result.note = (self.app.after_save)();
-        Ok(result)
+        Ok(core.saved(result))
     }
 
     fn write_atomically(&self, before: &str, after: &str, bom: bool) -> io::Result<()> {
@@ -610,5 +789,75 @@ mod tests {
             Err(SaveError::Io(_))
         ));
         assert_eq!(fs::read(&path).unwrap(), [0xff, 0xfe, 0x00]);
+    }
+
+    // ---------- the text core: no filesystem ----------
+
+    #[test]
+    fn text_state_parses_without_reading_anything() {
+        let app = app();
+        let state = TextStore::new(&app, "/nowhere/config").state("a = 1\n");
+        assert_eq!(state.values["a"], json!(1));
+        assert_eq!(state.version, version_of("a = 1\n"));
+        assert_eq!(state.path, PathBuf::from("/nowhere/config"));
+        assert!(state.parse_error.is_none());
+        assert!(TextStore::new(&app, "config").state("nonsense").parse_error.is_some());
+    }
+
+    #[test]
+    fn text_save_returns_the_new_text_its_version_and_the_note() {
+        let app = app();
+        let store = TextStore::new(&app, "config");
+        let r = store.save("a = 1\n", Some(&version_of("a = 1\n")), "", &[("a".into(), json!(2))]).unwrap();
+        assert_eq!(r.before, "a = 1\n");
+        assert_eq!(r.after, "a = 2\n");
+        assert_eq!(r.version, version_of("a = 2\n"));
+        assert_eq!(r.note.as_deref(), Some("Saved."));
+
+        let unchanged = store.save("a = 1\n", None, "", &[("a".into(), json!(1))]).unwrap();
+        assert_eq!(unchanged.version, version_of("a = 1\n"));
+        assert!(unchanged.note.is_none());
+    }
+
+    #[test]
+    fn text_apply_checks_the_version_and_the_values() {
+        let app = app();
+        let store = TextStore::new(&app, "config");
+        assert!(matches!(store.apply("a = 1\n", Some("stale"), "", &[]), Err(SaveError::Conflict)));
+        let Err(SaveError::Invalid(errors)) = store.apply("", None, "macos", &[("b".into(), json!(1))]) else {
+            panic!("expected errors")
+        };
+        assert_eq!(errors["b"], "This setting can't be overridden per platform.");
+        let preview = store.apply("a = 1\n", None, "", &[("a".into(), json!(3))]).unwrap();
+        assert_eq!((preview.after.as_str(), preview.version.as_str()), ("a = 3\n", version_of("a = 1\n").as_str()));
+        assert!(preview.note.is_none(), "a preview has no after-save note");
+    }
+
+    #[test]
+    fn memory_documents_keep_the_bom_and_save_into_their_text() {
+        let app = app();
+        let mut store = DocumentStore::new(&app, Document::memory("config", "\u{FEFF}a = 1\r\n"));
+        let state = store.state();
+        assert_eq!(state.values["a"], json!(1));
+        assert_eq!(state.path, PathBuf::from("config"));
+        store.save(Some(&state.version), "", &[("a".into(), json!(2)), ("b".into(), json!(3))]).unwrap();
+        assert_eq!(store.document.contents().as_deref(), Some("\u{FEFF}a = 2\r\nb = 3\r\n"));
+        assert_eq!(store.state().version, version_of("a = 2\r\nb = 3\r\n"));
+        assert_eq!(store.document.file_name().as_deref(), Some("config"));
+        assert!(!store.document.is_file());
+    }
+
+    #[test]
+    fn memory_and_file_saves_write_the_same_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app();
+        let original = "\u{FEFF}a = 1\r\n";
+        let changes = [("a".to_string(), json!(5)), ("b".to_string(), json!(6))];
+        let path = dir.path().join("config");
+        fs::write(&path, original).unwrap();
+        ConfigStore::new(&app, &path).save(None, "", &changes).unwrap();
+        let mut memory = DocumentStore::new(&app, Document::memory("config", original));
+        memory.save(None, "", &changes).unwrap();
+        assert_eq!(memory.document.contents().unwrap(), fs::read_to_string(&path).unwrap());
     }
 }

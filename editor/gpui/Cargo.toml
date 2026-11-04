@@ -7,6 +7,7 @@ members = [
     "crates/ghostty-config",
     "apps/rio-settings",
     "apps/ghostty-settings",
+    "apps/settings-web",
 ]
 
 [workspace.package]
@@ -38,3 +39,18 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# gpui-kit 0.9.0 with one change: gpui-pre-platform without its default `multithreaded` feature,
+# which builds `wasm_thread` (nightly-only) for wasm. Native builds don't use that feature. Drop
+# this once gpui-kit turns off gpui-pre-platform's defaults itself.
+[patch.crates-io]
+gpui-kit = { path = "vendor/gpui-kit" }
+
+# The browser playground (tools/web/build.ts): a release build tuned for download size.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+# Debug info only: wasm-bindgen reads the module's feature section, which a full strip removes.
+strip = "debuginfo"

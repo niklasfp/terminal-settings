@@ -39,9 +39,12 @@ gpui/
   crates/ghostty-config   Ghostty: schema merge, line format, +validate-config, reload, themes
   apps/rio-settings       main.rs = settings_ui::run(rio_config::app(), Rio's brand)
   apps/ghostty-settings   main.rs = settings_ui::run(ghostty_config::app(), Ghostty's brand)
+  apps/settings-web       The browser playground: settings_ui::run_web for either app (?app=rio|ghostty)
+  vendor/gpui-kit         gpui-kit 0.9.0 with gpui-pre's `multithreaded` default off (see its VENDORED.md)
 schema/<terminal>/        Generated source schema (<terminal>-source.json) + hand-written overlay (<terminal>-overlay.json)
 tools/<terminal>/         Scripts that regenerate the source schema and theme catalogue
 tools/gpui/               macOS .app bundler (package-macos.ts) and app icon generator (make-icons.ts)
+tools/web/                Builds the browser playground (build.ts)
 brand/                    Terminal logos and app icons
 ```
 
@@ -59,6 +62,39 @@ cargo run -p ghostty-settings -- --config /tmp/copy-of-config.ghostty
 Without `--config` they edit the live configs (`~/.config/rio/config.toml` or `$RIO_CONFIG_HOME`;
 `~/Library/Application Support/com.mitchellh.ghostty/config[.ghostty]` on macOS or
 `~/.config/ghostty/config[.ghostty]`). Always test against a copy.
+
+## Web playground
+
+`gpui/apps/settings-web` builds both editors for `wasm32-unknown-unknown` with GPUI's browser
+platform (WebGPU, falling back to WebGL2, drawn into one full-page canvas). It runs
+`settings_ui::run_web`: the config is text in memory (`settings_core::Document::Memory`), **Open…**
+reads a file the user picks or drops on the page, saving downloads or copies the result, and `AppDefinition::for_browser` drops
+what needs the system (the installed-theme lists and installing, Ghostty's validation and suggestion
+lists, the reload). `rio_config::browser_app` and `ghostty_config::browser_app` add their built-in
+theme lists back: Rio's catalogue (picking one downloads its file through the `Playground`'s
+`install_theme`) and the themes Ghostty ships (`schema/ghostty/ghostty-themes.json`). The browser side (file picker, drops, download) comes in through `settings_ui::playground::Playground`,
+so `crates/settings-ui/tests/playground.rs` tests the same window natively.
+
+Build and serve it locally (needs the wasm target and `wasm-bindgen-cli` at the version of the
+`wasm-bindgen` crate in `gpui/Cargo.lock`; the script checks and says what to install):
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version <version in Cargo.lock> --locked
+node tools/web/build.ts            # or --dev for a quicker, bigger debug build
+python3 -m http.server -d gpui/target/web 8000
+```
+
+Then open <http://localhost:8000/?app=rio> or `?app=ghostty` (no `?app` shows a small landing
+page). The page fetches its fonts from jsDelivr, so it needs a network connection.
+
+It runs single-threaded. gpui-pre's `multithreaded` feature needs nightly Rust and cross-origin
+isolation headers, which GitHub Pages can't send, so `vendor/gpui-kit` turns it off.
+
+**Deploy:** `.github/workflows/pages.yml` builds the site with the same script on every push to
+`main` that touches the editor, and deploys it to GitHub Pages
+(<https://niklasfp.github.io/terminal-settings/>). The `web` job in `ci.yml` builds it on every
+pull request, so a change that breaks the wasm build fails CI.
 
 ## Following a terminal release
 

@@ -6,8 +6,8 @@
 use crate::model::is_hex_color;
 use gpui_kit::component::{
     ActiveTheme as _, Colorize as _, Sizable as _, h_flex,
-    combobox::{Combobox, ComboboxState},
-    searchable_list::SearchableListItem,
+    combobox::{Combobox, ComboboxEvent, ComboboxState},
+    searchable_list::{SearchableListItem, SearchableVec},
     tag::Tag,
 };
 use gpui_kit::*;
@@ -116,7 +116,9 @@ impl ChoiceItem for ThemeItem {
     }
 }
 
-pub type ChoiceState<I> = ComboboxState<Vec<I>>;
+/// A `SearchableVec`, not a plain `Vec`: only it filters as the user types in the dropdown's search.
+pub type ChoiceState<I> = ComboboxState<SearchableVec<I>>;
+pub type ChoiceEvent<I> = ComboboxEvent<SearchableVec<I>>;
 
 /// A dropdown over a shared list (`base`) plus the names it must show on top of it: values that
 /// aren't in the list (a built-in font, a font from another machine, a theme file that's gone).
@@ -128,7 +130,7 @@ pub struct Chooser<I: ChoiceItem> {
 
 impl<I: ChoiceItem> Chooser<I> {
     pub fn new<V: 'static>(multiple: bool, searchable: bool, window: &mut Window, cx: &mut Context<V>) -> Self {
-        let state = cx.new(|cx| ChoiceState::new(Vec::new(), Vec::new(), window, cx).multiple(multiple).searchable(searchable));
+        let state = cx.new(|cx| ChoiceState::new(SearchableVec::new(Vec::new()), Vec::new(), window, cx).multiple(multiple).searchable(searchable));
         Self { state, base: None, extra: Vec::new() }
     }
 
@@ -148,7 +150,7 @@ impl<I: ChoiceItem> Chooser<I> {
         if rebuild {
             self.base = Some(base.clone());
             let items: Vec<I> = self.extra.iter().map(I::unlisted).chain(base.iter().cloned()).collect();
-            self.state.update(cx, |state, cx| state.set_items(items, window, cx));
+            self.state.update(cx, |state, cx| state.set_items(SearchableVec::new(items), window, cx));
         }
         // Re-selecting clears the dropdown's search, so leave a selection that already matches.
         if rebuild || self.state.read(cx).selected_values() != wanted {
@@ -162,7 +164,7 @@ impl<I: ChoiceItem> Chooser<I> {
     }
 
     /// The dropdown, sized by the caller's wrapper (see AGENTS.md).
-    pub fn render(&self, placeholder: impl Into<SharedString>, search: &'static str, cleanable: bool, disabled: bool) -> Combobox<Vec<I>> {
+    pub fn render(&self, placeholder: impl Into<SharedString>, search: &'static str, cleanable: bool, disabled: bool) -> Combobox<SearchableVec<I>> {
         Combobox::new(&self.state)
             .small()
             .menu_width(px(420.))

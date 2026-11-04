@@ -11,6 +11,10 @@ inputs:
     description: Extra rustup components, space-separated (e.g. "clippy").
     required: false
     default: ""
+  targets:
+    description: Extra rustup targets, space-separated (e.g. "wasm32-unknown-unknown").
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -19,6 +23,7 @@ runs:
       shell: bash
       env:
         COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
       run: |
         if ! command -v rustup > /dev/null; then
           if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -35,13 +40,13 @@ runs:
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
         fi
-        # shellcheck disable=SC2086 # COMPONENTS is a space-separated list on purpose.
-        rustup toolchain install stable --profile minimal ${COMPONENTS:+--component $COMPONENTS}
+        # shellcheck disable=SC2086 # COMPONENTS and TARGETS are space-separated lists on purpose.
+        rustup toolchain install stable --profile minimal ${COMPONENTS:+--component $COMPONENTS} ${TARGETS:+--target $TARGETS}
         rustup default stable
         rustc --version
 
     - name: Install GPUI's Linux libraries
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && !contains(inputs.targets, 'wasm32')
       shell: bash
       run: |
         sudo apt-get update -q

@@ -40,6 +40,21 @@ gpui_kit::assets::icon_assets!(
     ]
 );
 
+// The component icons. Native embeds them through gpui-kit. On the web gpui-kit would download
+// them from a server at runtime, so the same default set is embedded here instead.
+#[cfg(not(target_family = "wasm"))]
+use gpui_kit::assets::Assets as ComponentIcons;
+
+#[cfg(target_family = "wasm")]
+macro_rules! component_icons {
+    ($($variant:ident => $path:literal),* $(,)?) => {
+        gpui_kit::assets::icon_assets!(ComponentIcons, [$($variant),*]);
+    };
+}
+
+#[cfg(target_family = "wasm")]
+gpui_kit::assets::__component_icon_names!(component_icons);
+
 /// Where the logo is served from; the extension tells GPUI how to decode it.
 pub fn logo_path(logo: &[u8]) -> &'static str {
     if is_svg(logo) { "brand/logo.svg" } else { "brand/logo.png" }
@@ -90,11 +105,11 @@ impl AssetSource for AppAssets {
         if let Some(bytes) = ExtraIcons.load(path)? {
             return Ok(Some(bytes));
         }
-        gpui_kit::assets::Assets.load(path)
+        ComponentIcons.load(path)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths = gpui_kit::assets::Assets.list(path)?;
+        let mut paths = ComponentIcons.list(path)?;
         paths.extend(ExtraIcons.list(path)?);
         paths.sort();
         paths.dedup();
