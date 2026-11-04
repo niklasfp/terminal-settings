@@ -59,6 +59,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("/", FocusSearch, Some("SettingsWindow && !Input")),
         KeyBinding::new(if cfg!(target_os = "macos") { "cmd-f" } else { "ctrl-f" }, FocusSearch, Some(CONTEXT)),
     ]);
+    // A browser may be on a Mac, so the web build also takes ⌘F (it already has Ctrl+F).
+    #[cfg(target_family = "wasm")]
+    cx.bind_keys([KeyBinding::new("cmd-f", FocusSearch, Some(CONTEXT))]);
 }
 
 enum Banner {
@@ -74,11 +77,14 @@ fn platform_label(p: &str) -> &str {
     PLATFORMS.iter().find(|(id, _)| *id == p).map_or(p, |(_, l)| l)
 }
 
+/// The platform this runs on, for highlighting its badges; "" in a browser, which could be any.
 fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(target_os = "windows") {
         "windows"
+    } else if cfg!(target_family = "wasm") {
+        ""
     } else {
         "linux"
     }
@@ -127,7 +133,7 @@ pub struct SettingsWindow {
     focus: FocusHandle,
     scroll: ScrollHandle,
     /// A preview or save is running in the background; edits are locked.
-    busy: bool,
+    pub(crate) busy: bool,
     /// Settings whose longer docs ("More") are open.
     expanded: std::collections::HashSet<String>,
     /// The latest theme choice per setting; a download only applies if it's still the latest.
@@ -376,6 +382,7 @@ impl SettingsWindow {
         self.busy = true;
         cx.notify();
         let mut store = self.store();
+        let started = self.document.clone();
         let task = cx.background_executor().spawn(async move {
             let result = work(&mut store);
             (result, store.document)
@@ -384,8 +391,11 @@ impl SettingsWindow {
             let (result, document) = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.busy = false;
-                // Text in memory is the saved copy, so it changes with a save.
-                this.document = document;
+                // Text in memory is the saved copy, so it changes with a save. A document opened
+                // meanwhile wins.
+                if this.document == started {
+                    this.document = document;
+                }
                 done(this, result, window, cx);
                 cx.notify();
             })

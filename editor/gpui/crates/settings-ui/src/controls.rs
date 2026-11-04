@@ -247,7 +247,8 @@ impl SettingsWindow {
             ty => (ty, None),
         };
         let text_input = |window: &mut Window, cx: &mut Context<Self>| {
-            let ph = typed.map_or_else(|| placeholder(s), String::from);
+            // The overlay's own placeholder still wins (e.g. "Same as font-family").
+            let ph = s.placeholder.clone().or_else(|| typed.map(String::from)).unwrap_or_else(|| placeholder(s));
             cx.new(|cx| InputState::new(window, cx).placeholder(ph))
         };
         match ty {
@@ -496,6 +497,15 @@ impl SettingsWindow {
         for (key, input, text) in pending {
             input.update(cx, |state, cx| state.set_value("", window, cx));
             self.add_chip(&key, text, window, cx);
+        }
+    }
+
+    /// Drops list entries still being typed (opening another file must not carry them over).
+    pub(crate) fn clear_pending_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let inputs: Vec<Entity<InputState>> =
+            self.controls.values().filter_map(|c| if let Control::Chips(input) = c { Some(input.clone()) } else { None }).collect();
+        for input in inputs {
+            input.update(cx, |state, cx| state.set_value("", window, cx));
         }
     }
 

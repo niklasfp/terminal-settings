@@ -44,17 +44,27 @@ impl SettingsWindow {
     /// Asks the browser for a file and edits it, after confirming that unsaved edits may go.
     pub(crate) fn open_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(open) = self.playground(cx).map(|p| p.open_file) else { return };
+        if self.busy {
+            return;
+        }
         let n = self.dirty_count();
-        let discard = (n > 0).then(|| {
-            let message = format!("Discard {n} unsaved change{}?", if n == 1 { "" } else { "s" });
-            window.prompt(PromptLevel::Warning, &message, Some("Opening another file drops them."), &["Discard", "Cancel"], cx)
-        });
+        if n == 0 {
+            // Browsers only show a file picker during a click, so it opens here, not in a task.
+            let picked = open();
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(file) = picked.await else { return };
+                this.update_in(cx, |this, window, cx| this.open_bytes(file, window, cx)).ok();
+            })
+            .detach();
+            return;
+        }
+        let message = format!("Discard {n} unsaved change{}?", if n == 1 { "" } else { "s" });
+        let answer = window.prompt(PromptLevel::Warning, &message, Some("Opening another file drops them."), &["Discard", "Cancel"], cx);
         cx.spawn_in(window, async move |this, cx| {
-            if let Some(answer) = discard
-                && answer.await != Ok(0)
-            {
+            if answer.await != Ok(0) {
                 return;
             }
+            // Right after the Discard click: still within the browser's user-activation window.
             let Some(file) = open().await else { return };
             this.update_in(cx, |this, window, cx| this.open_bytes(file, window, cx)).ok();
         })
@@ -65,6 +75,9 @@ impl SettingsWindow {
     pub fn open_bytes(&mut self, file: OpenedFile, window: &mut Window, cx: &mut Context<Self>) {
         match String::from_utf8(file.bytes) {
             Ok(text) => {
+                // A save dialog still open belongs to the previous file.
+                window.close_dialog(cx);
+                self.clear_pending_entries(window, cx);
                 self.document = Document::memory(file.name, text);
                 self.reload(window, cx);
             }

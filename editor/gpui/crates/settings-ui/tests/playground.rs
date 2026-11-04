@@ -155,3 +155,44 @@ fn opening_a_file_shows_its_values_and_refuses_binary_files(cx: &mut TestAppCont
         "the opened file is edited; the binary one was refused"
     );
 }
+
+
+fn open_picked(f: &Fixture, cx: &mut TestAppContext, name: &str, text: &str) {
+    cx.update_window(f.window, |_, window, cx| {
+        f.view.update(cx, |view, cx| view.open_bytes(OpenedFile { name: name.into(), bytes: text.as_bytes().to_vec() }, window, cx))
+    })
+    .expect("window");
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn opening_a_file_drops_half_typed_entries_and_a_stale_save_dialog(cx: &mut TestAppContext) {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f = open(cx, rio_config::app(), "config.toml", "");
+
+    // A list entry typed for the old file doesn't come along.
+    f.search(cx, "shell.args");
+    f.ui(cx, |window, cx| {
+        window.click("shell.args:input", cx);
+        window.input("--half-typed", cx);
+    });
+    open_picked(&f, cx, "first.toml", "# first\n");
+    f.ui(cx, |window, _| assert_eq!(window.find("shell.args:input").value(), Some("")));
+
+    // The old file's save dialog closes, so it can't save its edits into the new file.
+    f.ui(cx, |window, cx| {
+        window.click("search", cx);
+        window.press("secondary-a", cx);
+        window.input("confirm-before-quit", cx);
+    });
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.ui(cx, |window, cx| window.click("save", cx));
+    f.ui(cx, |window, _| assert!(window.try_find("confirm-save").is_some(), "the dialog is open"));
+    open_picked(&f, cx, "second.toml", "# second\n");
+    f.ui(cx, |window, _| assert!(window.try_find("confirm-save").is_none(), "the old file's dialog is gone"));
+    assert_eq!(f.dirty(cx), 0);
+
+    f.ui(cx, |window, cx| window.click("confirm-before-quit:switch", cx));
+    f.download(cx);
+    assert_eq!(downloads(), [("second.toml".to_string(), "# second\nconfirm-before-quit = false\n".to_string())]);
+}

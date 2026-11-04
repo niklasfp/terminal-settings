@@ -101,42 +101,59 @@ fn query_app() -> Option<String> {
 /// Shows the browser's file picker. The picker opens right away (browsers only allow it during a
 /// click); the future resolves once a file is chosen and read, or with `None` when it's cancelled.
 fn open_file() -> PickedFile {
-    let Some((input, chosen)) = show_picker() else { return Box::pin(async { None }) };
+    let Some(picker) = Picker::show() else { return Box::pin(async { None }) };
     Box::pin(async move {
-        let picked = chosen.await.unwrap_or(false);
-        input.remove();
+        let mut picker = picker;
+        let picked = (&mut picker.chosen).await.unwrap_or(false);
+        let input = &picker.input;
         if !picked {
             return None;
         }
         let file = input.files()?.get(0)?;
         let buffer = JsFuture::from(file.array_buffer()).await.ok()?;
         Some(OpenedFile { name: file.name(), bytes: js_sys::Uint8Array::new(&buffer).to_vec() })
+        // `picker` drops here: the input leaves the page and its listeners are freed.
     })
 }
 
-/// A hidden `<input type=file>`, clicked, and a channel that says whether a file was chosen.
-fn show_picker() -> Option<(web_sys::HtmlInputElement, futures_channel::oneshot::Receiver<bool>)> {
-    let document = web_sys::window()?.document()?;
-    let input: web_sys::HtmlInputElement = document.create_element("input").ok()?.dyn_into().ok()?;
-    input.set_type("file");
-    input.style().set_property("display", "none").ok()?;
-    document.body()?.append_child(&input).ok()?;
+/// A hidden `<input type=file>`, already clicked, and a channel that says whether a file was
+/// chosen. Dropping it removes the input and frees its listeners.
+struct Picker {
+    input: web_sys::HtmlInputElement,
+    chosen: futures_channel::oneshot::Receiver<bool>,
+    _listeners: Vec<Closure<dyn FnMut()>>,
+}
 
-    let (tx, rx) = futures_channel::oneshot::channel();
-    let tx = Rc::new(RefCell::new(Some(tx)));
-    for (event, picked) in [("change", true), ("cancel", false)] {
-        let tx = tx.clone();
-        let listener = Closure::<dyn FnMut()>::new(move || {
-            if let Some(tx) = tx.borrow_mut().take() {
-                let _ = tx.send(picked);
-            }
-        });
-        input.add_event_listener_with_callback(event, listener.as_ref().unchecked_ref()).ok()?;
-        // Lives as long as the page; there are two per picker opened.
-        listener.forget();
+impl Picker {
+    fn show() -> Option<Self> {
+        let document = web_sys::window()?.document()?;
+        let input: web_sys::HtmlInputElement = document.create_element("input").ok()?.dyn_into().ok()?;
+        input.set_type("file");
+        input.style().set_property("display", "none").ok()?;
+        let (tx, chosen) = futures_channel::oneshot::channel();
+        let tx = Rc::new(RefCell::new(Some(tx)));
+        let mut listeners = Vec::new();
+        for (event, picked) in [("change", true), ("cancel", false)] {
+            let tx = tx.clone();
+            let listener = Closure::<dyn FnMut()>::new(move || {
+                if let Some(tx) = tx.borrow_mut().take() {
+                    let _ = tx.send(picked);
+                }
+            });
+            input.add_event_listener_with_callback(event, listener.as_ref().unchecked_ref()).ok()?;
+            listeners.push(listener);
+        }
+        document.body()?.append_child(&input).ok()?;
+        let picker = Self { input, chosen, _listeners: listeners };
+        picker.input.click();
+        Some(picker)
     }
-    input.click();
-    Some((input, rx))
+}
+
+impl Drop for Picker {
+    fn drop(&mut self) {
+        self.input.remove();
+    }
 }
 
 /// Downloads `bytes` as a file called `name`.
