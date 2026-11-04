@@ -24,9 +24,8 @@ use gpui_kit::*;
 use gpui_kit::base::Selectable as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::Value;
-use settings_core::{AppDefinition, ConfigStore, DiffOp, FieldErrors, SaveError, Setting, SettingType, line_diff};
+use settings_core::{AppDefinition, DiffOp, Document, DocumentStore, FieldErrors, SaveError, Setting, SettingType, line_diff};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -106,7 +105,8 @@ fn tidy_path(p: &std::path::Path) -> String {
 
 pub struct SettingsWindow {
     pub(crate) app: &'static AppDefinition,
-    pub(crate) path: PathBuf,
+    /// The file being edited, or text held in memory.
+    pub(crate) document: Document,
     pub(crate) editor: Editor,
     pub(crate) controls: HashMap<String, Control>,
     /// Every font and theme dropdown lists these (shared, so each list is built once).
@@ -131,12 +131,14 @@ pub struct SettingsWindow {
     expanded: std::collections::HashSet<String>,
     /// The latest theme choice per setting; a download only applies if it's still the latest.
     pub(crate) theme_requests: HashMap<String, u64>,
-    _poll: Task<()>,
+    /// Watches a file for outside edits; none for text in memory.
+    _poll: Option<Task<()>>,
 }
 
 impl SettingsWindow {
-    pub fn new(app: &'static AppDefinition, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let state = ConfigStore::new(app, path.clone()).state();
+    pub fn new(app: &'static AppDefinition, document: impl Into<Document>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let document = document.into();
+        let state = DocumentStore::new(app, document.clone()).state();
         let schema = &app.schema;
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let scope_items: Vec<SharedString> = PLATFORMS
@@ -150,13 +152,15 @@ impl SettingsWindow {
         fonts.sort_by_key(|f| f.to_lowercase());
         fonts.dedup();
 
-        let poll = cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(3)).await;
-                if this.update_in(cx, |this, window, cx| this.poll(window, cx)).is_err() {
-                    break;
+        let poll = document.is_file().then(|| {
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(3)).await;
+                    if this.update_in(cx, |this, window, cx| this.poll(window, cx)).is_err() {
+                        break;
+                    }
                 }
-            }
+            })
         });
 
         let appearance = cx
@@ -166,7 +170,7 @@ impl SettingsWindow {
 
         let mut this = Self {
             app,
-            path,
+            document,
             banner: state.parse_error.clone().map(Banner::ParseError),
             editor: Editor::new(schema, state),
             controls: HashMap::new(),
@@ -271,8 +275,8 @@ impl SettingsWindow {
         }
     }
 
-    fn store(&self) -> ConfigStore<'static> {
-        ConfigStore::new(self.app, self.path.clone())
+    fn store(&self) -> DocumentStore<'static> {
+        DocumentStore::new(self.app, self.document.clone())
     }
 
     /// Re-reads the file and shows it, dropping unsaved edits.
@@ -319,7 +323,7 @@ impl SettingsWindow {
     }
 
     fn file_name(&self) -> String {
-        self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "the config file".into())
+        self.document.file_name().unwrap_or_else(|| "the config file".into())
     }
 
     /// Asks before unsaved changes are thrown away by closing or quitting. Returns true when there
@@ -360,19 +364,24 @@ impl SettingsWindow {
     /// the terminal (seconds, in the worst case). Edits are locked until it finishes.
     fn in_background<R: Send + 'static>(
         &mut self,
-        work: impl FnOnce(ConfigStore<'static>) -> R + Send + 'static,
+        work: impl FnOnce(&mut DocumentStore<'static>) -> R + Send + 'static,
         done: impl FnOnce(&mut Self, R, &mut Window, &mut Context<Self>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.busy = true;
         cx.notify();
-        let store = self.store();
-        let task = cx.background_executor().spawn(async move { work(store) });
+        let mut store = self.store();
+        let task = cx.background_executor().spawn(async move {
+            let result = work(&mut store);
+            (result, store.document)
+        });
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await;
+            let (result, document) = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.busy = false;
+                // Text in memory is the saved copy, so it changes with a save.
+                this.document = document;
                 done(this, result, window, cx);
                 cx.notify();
             })
@@ -573,7 +582,7 @@ impl SettingsWindow {
         let lines = [
             format!("Version {}", crate::VERSION),
             format!("Settings schema from {} {}", self.app.terminal, self.editor.schema.revision.chars().take(7).collect::<String>()),
-            format!("Editing {}", tidy_path(&self.path)),
+            format!("Editing {}", tidy_path(&self.document.path())),
         ];
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;

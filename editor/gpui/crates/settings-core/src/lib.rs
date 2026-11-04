@@ -12,7 +12,7 @@ pub use diff::{DiffLine, DiffOp, line_diff};
 pub use merge::{MergedSchema, SchemaDiagnostic, humanize};
 pub use values::format_number;
 pub use schema::{Field, Group, Schema, Setting, SettingType};
-pub use store::{ApplyResult, ConfigState, ConfigStore, SaveError, version_of};
+pub use store::{ApplyResult, ConfigState, ConfigStore, Document, DocumentStore, SaveError, TextStore, version_of};
 
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;

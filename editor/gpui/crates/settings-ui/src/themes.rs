@@ -13,7 +13,7 @@ impl SettingsWindow {
     /// Loads the theme list in the background, then refreshes every theme dropdown.
     pub(crate) fn load_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(list) = self.app.themes else { return };
-        let path = self.path.clone();
+        let path = self.document.path();
         let task = cx.background_executor().spawn(async move { list(&path) });
         cx.spawn_in(window, async move |this, cx| {
             let themes = task.await;
@@ -90,7 +90,7 @@ impl SettingsWindow {
             return;
         }
         let Some(install) = self.app.install_theme else { return };
-        let path = self.path.clone();
+        let path = self.document.path();
         let key = key.to_string();
         window.push_notification(format!("Downloading “{name}”…"), cx);
         let task = cx.background_executor().spawn({
