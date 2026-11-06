@@ -137,6 +137,9 @@ const GAP: f32 = 4.0;
 const TRACK_W: f32 = COLUMNS as f32 * SWATCH + (COLUMNS - 1) as f32 * GAP;
 const TRACK_H: f32 = 10.0;
 const KNOB: f32 = 16.0;
+/// Both tabs' height, so switching between them doesn't resize the popover: the taller of the two
+/// (four labelled sliders), with the palette's rows spread over it.
+const PANEL_H: f32 = 180.0;
 
 /// Rows of preset colors: a grey ramp, then six shades of twelve hues (lightest first).
 fn palette() -> Vec<Vec<Hsla>> {
@@ -219,7 +222,7 @@ impl SettingsWindow {
 
     fn palette_panel(&self, key: &str, cur: Hsla, k: &Kit) -> El {
         let cur_rgba = cur.to_rgba();
-        let mut grid = col().key("palette").gap(GAP);
+        let mut grid = col().key("palette").h(PANEL_H).justify_between();
         for (r, colors) in palette().into_iter().enumerate() {
             let mut line = row().key(format!("row{r}")).gap(GAP);
             for (i, c) in colors.into_iter().enumerate() {
@@ -259,7 +262,7 @@ impl SettingsWindow {
             ),
             (Channel::Alpha, "Alpha", vec![(0.0, Hsla { a: 0.0, ..opaque }.color()), (1.0, opaque.color())]),
         ];
-        let mut panel = col().key("sliders").gap(10.0);
+        let mut panel = col().key("sliders").h(PANEL_H).justify_between();
         for (channel, name, stops) in tracks {
             panel = panel.child(
                 col().key(format!("{name}-row")).gap(4.0)
