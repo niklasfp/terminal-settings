@@ -7,6 +7,7 @@ members = [
     "crates/settings-rune",
     "apps/rio-settings",
     "apps/ghostty-settings",
+    "apps/settings-web",
 ]
 
 [workspace.package]
@@ -21,7 +22,7 @@ ghostty-config = { path = "../gpui/crates/ghostty-config" }
 settings-rune = { path = "crates/settings-rune" }
 serde_json = { version = "1", features = ["preserve_order"] }
 # Rune is pre-release: pin a `dev` revision (dev is never rewritten).
-rune = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50", features = ["native-file-dialog"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
 
 [profile.dev.package."*"]
@@ -32,3 +33,20 @@ opt-level = 1
 [profile.release]
 codegen-units = 16
 incremental = true
+
+# The size-tuned build, the same as ../gpui's `dist` profile.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+incremental = false
+
+# The browser playground: a release build tuned for download size.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = "debuginfo"
+incremental = false

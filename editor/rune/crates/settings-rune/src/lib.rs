@@ -2,15 +2,18 @@
 //! A terminal's binary is `settings_rune::run(its AppDefinition, its Brand)`; nothing here is
 //! terminal-specific.
 
+pub mod color_picker;
 pub mod controls;
 pub mod icons;
 #[path = "../../../../gpui/crates/settings-ui/src/model.rs"]
 pub mod model;
+pub mod playground;
 pub mod state;
 pub mod view;
 
+use playground::Playground;
 use rune::{AppSpec, Chrome};
-use settings_core::AppDefinition;
+use settings_core::{AppDefinition, Document};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use view::{Appearance, SettingsWindow};
@@ -43,8 +46,9 @@ pub struct Brand {
 struct LaunchContext {
     app: &'static AppDefinition,
     brand: Brand,
-    config_path: PathBuf,
-    appearance_file: PathBuf,
+    document: Document,
+    appearance_file: Option<PathBuf>,
+    playground: Option<Playground>,
 }
 
 static LAUNCH: OnceLock<LaunchContext> = OnceLock::new();
@@ -102,12 +106,16 @@ fn parse_args(app: &AppDefinition) -> Option<PathBuf> {
 
 fn init_window() -> SettingsWindow {
     let ctx = LAUNCH.get().expect("launch context initialized before rune::run");
-    SettingsWindow::new(
+    let mut win = SettingsWindow::new(
         ctx.app,
         ctx.brand,
-        ctx.config_path.clone(),
-        Some(ctx.appearance_file.clone()),
-    )
+        ctx.document.clone(),
+        ctx.appearance_file.clone(),
+    );
+    if let Some(pg) = ctx.playground {
+        win = win.with_playground(pg);
+    }
+    win
 }
 
 /// Parses the command line and runs the settings window (or Rune's headless `--snap` / `--tree`
@@ -121,8 +129,9 @@ pub fn run(app: AppDefinition, brand: Brand) {
     let _ = LAUNCH.set(LaunchContext {
         app,
         brand,
-        config_path,
-        appearance_file,
+        document: config_path.into(),
+        appearance_file: Some(appearance_file),
+        playground: None,
     });
 
     let chrome = Chrome {
@@ -141,16 +150,53 @@ pub fn run(app: AppDefinition, brand: Brand) {
                     s.active_group = "colors".into();
                 }
             }),
+            ("scope", |s| s.open_select = Some("header:scope".into())),
+            ("picker", |s| open_picker(s, 0)),
+            ("picker-sliders", |s| open_picker(s, 1)),
             ("window", |s| {
                 if s.editor.schema.groups.iter().any(|g| g.id == "window") {
                     s.active_group = "window".into();
                 }
             }),
         ],
-        setup: Some(|s, waker| s.waker = Some(waker)),
+        setup: Some(|s, waker| s.setup(waker)),
         poll: Some(|s, now, _| s.poll_async(now)),
         on_key: Some(|s, ev, tx| s.on_key(ev, tx)),
         ..AppSpec::new(title, (1180.0, 820.0), init_window, SettingsWindow::view)
     };
     rune::App::new(spec).chrome(chrome).run();
+}
+
+/// Runs the settings window in the browser playground over an in-memory config document.
+pub fn run_web(app: AppDefinition, brand: Brand, playground: Playground) {
+    let app: &'static AppDefinition = Box::leak(Box::new(app));
+    let document = Document::memory(playground.file_name, "");
+    let title: &'static str = Box::leak(format!("{} playground", app.schema.title).into_boxed_str());
+    let _ = LAUNCH.set(LaunchContext {
+        app,
+        brand,
+        document,
+        appearance_file: None,
+        playground: Some(playground),
+    });
+    let spec = AppSpec::<SettingsWindow> {
+        min_size: Some((720.0, 480.0)),
+        setup: Some(|s, waker| s.setup(waker)),
+        poll: Some(|s, now, _| s.poll_async(now)),
+        on_key: Some(|s, ev, tx| s.on_key(ev, tx)),
+        ..AppSpec::new(title, (1180.0, 820.0), init_window, SettingsWindow::view)
+    };
+    rune::App::new(spec).run();
+}
+
+/// The `picker` scenes: the first color setting's picker open on the Colors page (or the first group
+/// with one), on the palette (`tab` 0) or the sliders.
+fn open_picker(s: &mut SettingsWindow, tab: usize) {
+    let Some(setting) = s.editor.schema.settings.iter().find(|x| x.ty == settings_core::SettingType::Color) else { return };
+    let (key, group) = (setting.key.clone(), setting.group.clone());
+    s.active_group = group;
+    s.open_color_picker(&key);
+    if let Some(p) = &mut s.color_picker {
+        p.tab = tab;
+    }
 }

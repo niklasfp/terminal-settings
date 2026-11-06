@@ -15,11 +15,11 @@ use crate::VERSION;
 use rune::tok::motion;
 use rune::{Color, Cx, El, ScrollSpec, col, el, icon, row, text};
 use rune_kit::{
-    Badge, BadgeVariant, Button, ButtonVariant, ControlSize, Dialog, IconButton, IconButtonVariant,
+    Badge, BadgeVariant, Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant,
     Kit, ScrollBar, SegmentedControl, Select, TextInput, Toast, ToastRegion, glyphs,
 };
 use serde_json::Value;
-use settings_core::{DiffOp, Setting, SettingType};
+use settings_core::{Setting, SettingType};
 use std::path::Path;
 
 const PLATFORMS: [(&str, &str); 4] = [
@@ -38,6 +38,8 @@ fn current_platform() -> &'static str {
         "macos"
     } else if cfg!(target_os = "windows") {
         "windows"
+    } else if cfg!(target_family = "wasm") {
+        ""
     } else {
         "linux"
     }
@@ -69,6 +71,7 @@ impl SettingsWindow {
         let content = self.render_content(&query, &k, &mut layer);
 
         self.render_save_dialog(&k, &mut layer);
+        self.render_discard_dialog(&k, &mut layer);
         if let Some(msg) = &self.toast {
             let toast = Toast::new("status-toast", msg.clone())
                 .closable()
@@ -78,12 +81,17 @@ impl SettingsWindow {
         }
 
         let split = row().key("main-split").grow(1.0).min_h(0.0).w_full().child(sidebar).child(content);
-        let base = col().key("settings-window").w_full().h_full().fill(k.c.bg_base).child(header).child(split);
+        let mut base = col().key("settings-window").w_full().h_full().fill(k.c.bg_base).child(header);
+        if let Some(banner) = self.render_playground_banner(&k) {
+            base = base.child(banner);
+        }
+        base = base.child(split);
         rune_kit::root(base, layer)
     }
 
     fn render_header(&self, k: &Kit, layer: &mut Vec<El>, titlebar_inset: f32) -> El {
         let dirty = self.editor.dirty_count();
+        let playground = self.playground.is_some();
         let state = &self.editor.state;
         let path = if state.target != state.path {
             format!("{} → {}", tidy_path(&state.path), tidy_path(&state.target))
@@ -151,8 +159,7 @@ impl SettingsWindow {
                                 app.editor.set_scope(scope);
                                 app.sync_all();
                             })
-                            .build(k, layer)
-                            .key("scope-select"),
+                            .build(k, layer),
                     ),
             );
         }
@@ -182,13 +189,28 @@ impl SettingsWindow {
                 .key("appearance"),
         );
 
+        if playground {
+            r = r.child(
+                Button::new("Open…")
+                    .variant(ButtonVariant::Outline)
+                    .control_size(ControlSize::Large)
+                    .icon(&glyphs::FOLDER_OPEN)
+                    .disabled(self.busy)
+                    .help("Edit a config file from your computer")
+                    .on_press(|app: &mut Self| app.open_file())
+                    .build(k)
+                    .key("open"),
+            );
+        }
+
         let save_label = if dirty > 0 { format!("Save ({dirty})") } else { "Save".to_string() };
+        let save_help = if playground { "Download or copy the changed file" } else { "Save (⌘S)" };
         r.child(
             Button::new(save_label)
                 .variant(ButtonVariant::Contrast)
                 .control_size(ControlSize::Large)
                 .disabled(dirty == 0 || self.busy)
-                .help("Save (⌘S)")
+                .help(save_help)
                 .on_press(|app: &mut Self| app.start_save())
                 .build(k)
                 .key("save"),
@@ -413,7 +435,7 @@ impl SettingsWindow {
             }
             Banner::ParseError(message) => Some(self.alert_box(
                 "parse-error-banner",
-                format!("{message} Fix the file in your editor; this window updates when it's valid again."),
+                self.parse_error_message(message),
                 k.c.danger.bg,
                 k.c.danger.border,
                 k.c.danger.fg,
@@ -702,74 +724,5 @@ impl SettingsWindow {
                 .child(swatches(""))
                 .child(swatches("light-")),
         )
-    }
-
-    fn render_save_dialog(&self, k: &Kit, layer: &mut Vec<El>) {
-        let Some(preview) = &self.save_preview else { return };
-        let title = format!("Save changes to {}?", self.file_name());
-        let mut diff_rows = col().key("diff-rows").w_full().py(6.0);
-        for (i, d) in preview.diff.iter().enumerate() {
-            let (marker, bg, fg) = match d.op {
-                DiffOp::Add => ("+", k.c.success.bg, k.c.text_base),
-                DiffOp::Remove => ("-", k.c.danger.bg, k.c.text_base),
-                DiffOp::Context => (" ", Color::TRANSPARENT, k.c.text_muted),
-                DiffOp::Gap => ("", Color::TRANSPARENT, k.c.text_faint),
-            };
-            let number = match d.op {
-                DiffOp::Gap => "⋯".to_string(),
-                DiffOp::Remove => String::new(),
-                _ => d.line.to_string(),
-            };
-            let body = if d.op == DiffOp::Gap { String::new() } else { format!("{marker} {}", d.text) };
-            diff_rows = diff_rows.child(
-                row()
-                    .key(format!("diff-line-{i}"))
-                    .w_full()
-                    .px(10.0)
-                    .py(2.0)
-                    .gap(8.0)
-                    .fill(bg)
-                    .child(text(number).w(32.0).font(k.ty.mono).color(k.c.text_faint))
-                    .child(text(body).font(k.ty.mono).color(fg)),
-            );
-        }
-        let mut diff_box =
-            col().key("diff-scroll").w_full().radius(k.radius.md).fill(k.c.bg_deep).border(1.0, k.c.border_base);
-        if preview.diff.len() > 10 {
-            diff_box = diff_box.h(240.0).scroll(ScrollSpec { stick_bottom: false }).child(diff_rows).scroll_bar(k);
-        } else {
-            diff_box = diff_box.child(diff_rows);
-        }
-
-        let footer = row()
-            .w_full()
-            .justify_end()
-            .gap(8.0)
-            .child(
-                Button::new("Cancel")
-                    .variant(ButtonVariant::Outline)
-                    .control_size(ControlSize::Regular)
-                    .on_press(|app: &mut Self| app.save_preview = None)
-                    .build(k)
-                    .key("cancel-save"),
-            )
-            .child(
-                Button::new("Save")
-                    .variant(ButtonVariant::Contrast)
-                    .control_size(ControlSize::Regular)
-                    .on_press(|app: &mut Self| app.confirm_save())
-                    .build(k)
-                    .default_button()
-                    .key("confirm-save"),
-            );
-
-        Dialog::new("save-dialog", title)
-            .open(true)
-            .fit()
-            .width(680.0)
-            .description("Only these lines change. Everything else in the file stays as it is.")
-            .child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(diff_box).child(footer))
-            .on_close(|app: &mut Self| app.save_preview = None)
-            .build(k, layer);
     }
 }

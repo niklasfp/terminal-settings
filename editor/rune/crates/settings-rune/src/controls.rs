@@ -8,9 +8,9 @@ use crate::icons;
 use crate::model::{format_number, plain, same};
 use crate::state::SettingsWindow;
 use rune::tok::motion;
-use rune::{
-    Color, Drag, El, FileDialogOptions, Key, KeyEvent, Phase, TextEdit, Tx, col, el, row, text,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use rune::{FileDialogOptions, Tx};
+use rune::{Color, Drag, El, Key, KeyEvent, Phase, TextEdit, col, el, row, text};
 use rune_kit::{
     Button, ButtonVariant, Checkbox, Combobox, ComboboxOption, ComboboxState, ControlSize,
     IconButton, IconButtonVariant, Kit, SegmentedControl, Select, State, Switch, TextArea,
@@ -213,7 +213,7 @@ impl SettingsWindow {
                     let open = self.open_select.as_deref() == Some(select_id.as_str());
                     let owned_values: Vec<String> = values.to_vec();
                     let owned_labels = labels.clone();
-                    let (id_toggle, id_choose) = (select_id.clone(), select_id.clone());
+                    let id_toggle = select_id.clone();
                     Select::new(&select_id, &labels)
                         .label(&s.label)
                         .width(200.0)
@@ -238,7 +238,6 @@ impl SettingsWindow {
                             }
                         })
                         .build(k, layer)
-                        .key(id_choose)
                 }
             }
             SettingType::Flags => self.render_flags_control(s, &v, disabled, k, layer),
@@ -246,7 +245,7 @@ impl SettingsWindow {
                 self.render_theme_control(s, &v, disabled, k, layer)
             }
             SettingType::Int | SettingType::Float => self.render_number_control(s, &v, disabled, k),
-            SettingType::Color => self.render_color_control(s, &v, disabled, k),
+            SettingType::Color => self.render_color_control(s, &v, disabled, k, layer),
             SettingType::Strings | SettingType::Fonts => {
                 self.render_chips_control(s, &v, disabled, k)
             }
@@ -327,7 +326,8 @@ impl SettingsWindow {
                     .key(format!("{}:off", s.key)),
             );
         }
-        if (s.pick.is_some() || s.ty == SettingType::Path) && !disabled {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.document.is_file() && (s.pick.is_some() || s.ty == SettingType::Path) && !disabled {
             let key = s.key.clone();
             let folder = s.pick.as_deref() == Some("folder");
             let title = format!("Choose {}", s.label.to_lowercase());
@@ -482,25 +482,21 @@ impl SettingsWindow {
         slider
     }
 
-    fn render_color_control(&self, s: &'static Setting, v: &Value, disabled: bool, k: &Kit) -> El {
+    fn render_color_control(
+        &self,
+        s: &'static Setting,
+        v: &Value,
+        disabled: bool,
+        k: &Kit,
+        layer: &mut Vec<El>,
+    ) -> El {
         let empty = TextEdit::default();
         let edit = self.edits.get(&s.key).unwrap_or(&empty);
-        let swatch_color = v
-            .as_str()
-            .and_then(parse_hex_color)
-            .unwrap_or(Color::TRANSPARENT);
         let (k_edit, k_change) = (s.key.clone(), s.key.clone());
         row()
             .gap(8.0)
             .center_y()
-            .child(
-                el().key(format!("{}:swatch", s.key))
-                    .size(24.0, 24.0)
-                    .radius(k.radius.sm)
-                    .fill(swatch_color)
-                    .border(1.0, k.c.border_strong)
-                    .a11y_hidden(),
-            )
+            .child(self.render_color_picker(s, v, disabled, k, layer))
             .child(
                 TextInput::new(edit)
                     .label(&s.label)
@@ -558,8 +554,7 @@ impl SettingsWindow {
             .on_choose(move |app: &mut SettingsWindow, chosen: &str, _| {
                 app.choose_theme(&k_choose, chosen);
             })
-            .build(k, layer)
-            .key(format!("{}:theme", s.key)),
+            .build(k, layer),
         );
         if cur.is_some() && s.nullable && !disabled {
             r = r.child(
@@ -628,7 +623,6 @@ impl SettingsWindow {
         .disabled(disabled)
         .on_choose(move |app: &mut SettingsWindow, chosen: &str, _| app.toggle_flag(&k_choose, chosen))
         .build(k, layer)
-        .key(format!("{}:flags", s.key))
     }
 
     fn render_chips_control(&self, s: &'static Setting, v: &Value, disabled: bool, k: &Kit) -> El {

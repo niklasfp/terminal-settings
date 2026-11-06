@@ -2,6 +2,7 @@
 
 use crate::controls::{margin_compress, margin_expand, number, parse_hex_color};
 use crate::model::{self, Editor, format_number, plain, same};
+use crate::playground::{OpenedFile, PendingOpen, Playground};
 use crate::Brand;
 use rune::{Color, Image, ImageCache, Key, KeyEvent, TextEdit, Tx, Waker};
 use rune_kit::{ComboboxOption, ComboboxState, Kit, PaletteSeed};
@@ -11,7 +12,11 @@ use settings_core::{
     SaveError, Setting, SettingType, ThemeInfo, line_diff,
 };
 use std::collections::{HashMap, HashSet};
+#[cfg(not(target_arch = "wasm32"))]
+use std::future::Future;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::pin::Pin;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -74,7 +79,14 @@ pub enum AsyncMsg {
         key: String,
         req_id: u64,
         theme: String,
-        result: Result<(), String>,
+        result: Result<Option<String>, String>,
+    },
+    FilePicked(Option<OpenedFile>),
+    FileDropped(OpenedFile),
+    CopyFinished {
+        ok: bool,
+        changes: Vec<(String, Value)>,
+        name: String,
     },
 }
 
@@ -82,12 +94,15 @@ pub struct SettingsWindow {
     pub app: &'static AppDefinition,
     pub brand: Brand,
     pub document: Document,
+    pub playground: Option<Playground>,
+    pub discard_prompt: Option<PendingOpen>,
     pub editor: Editor,
     pub edits: HashMap<String, TextEdit>,
     pub combos: HashMap<String, ComboboxState>,
     pub record_rows: HashMap<String, Vec<u64>>,
     pub next_row_id: u64,
     pub open_select: Option<String>,
+    pub color_picker: Option<crate::color_picker::ColorPickerState>,
     pub themes: Vec<ThemeInfo>,
     pub theme_options: Vec<ComboboxOption>,
     pub theme_requests: HashMap<String, u64>,
@@ -106,6 +121,8 @@ pub struct SettingsWindow {
     pub logo: Option<Image>,
     pub tx_async: Sender<AsyncMsg>,
     pub rx_async: Arc<Mutex<Receiver<AsyncMsg>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub pending_tasks: Vec<Pin<Box<dyn Future<Output = AsyncMsg>>>>,
     pub waker: Option<Waker>,
     pub last_poll_sec: f64,
 }
@@ -128,11 +145,14 @@ impl SettingsWindow {
             banner: state.parse_error.clone().map(Banner::ParseError),
             editor: Editor::new(schema, state),
             document,
+            playground: None,
+            discard_prompt: None,
             edits: HashMap::new(),
             combos: HashMap::new(),
             record_rows: HashMap::new(),
             next_row_id: 0,
             open_select: None,
+            color_picker: None,
             themes: Vec::new(),
             theme_options: Vec::new(),
             theme_requests: HashMap::new(),
@@ -151,19 +171,40 @@ impl SettingsWindow {
             expanded: HashSet::new(),
             save_preview: None,
             toast: None,
-            logo: decode_logo(brand.logo),
+            logo: decode_logo(brand.logo, None),
             tx_async,
             rx_async: Arc::new(Mutex::new(rx_async)),
+            #[cfg(not(target_arch = "wasm32"))]
+            pending_tasks: Vec::new(),
             waker: None,
             last_poll_sec: 0.0,
         };
         this.sync_all();
-        if let Some(themes_fn) = app.themes
-            && this.document.is_file()
-        {
+        if let Some(themes_fn) = app.themes {
             this.set_themes(themes_fn(&this.document.path()));
         }
         this
+    }
+
+    pub fn setup(&mut self, waker: Waker) {
+        self.waker = Some(waker.clone());
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.logo = decode_logo(self.brand.logo, Some(waker.clone()));
+            if let Some(next_fn) = self.playground.as_ref().and_then(|p| p.next_drop) {
+                let tx = self.tx_async.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    loop {
+                        if let Some(file) = next_fn().await {
+                            if tx.send(AsyncMsg::FileDropped(file)).is_err() {
+                                break;
+                            }
+                            waker();
+                        }
+                    }
+                });
+            }
+        }
     }
 
     pub fn set_themes(&mut self, themes: Vec<ThemeInfo>) {
@@ -249,23 +290,41 @@ impl SettingsWindow {
             combo.close();
         }
         let needs_install = self.themes.iter().find(|t| t.name == chosen).is_some_and(|t| !t.installed);
-        if needs_install
-            && let Some(install) = self.app.install_theme
-            && self.document.is_file()
-        {
-            let req = self.theme_requests.entry(key.to_string()).or_default();
-            *req += 1;
-            let (req_id, path, theme, key_owned) = (*req, self.document.path(), chosen.to_string(), key.to_string());
-            let (tx, waker) = (self.tx_async.clone(), self.waker.clone());
-            self.toast = Some(format!("Downloading theme “{chosen}”…"));
-            std::thread::spawn(move || {
-                let result = install(&path, &theme);
-                let _ = tx.send(AsyncMsg::ThemeInstalled { key: key_owned, req_id, theme, result });
-                if let Some(w) = waker {
-                    w();
-                }
-            });
-            return;
+        if needs_install {
+            if let Some(download) = self.playground.as_ref().and_then(|p| p.install_theme) {
+                let req = self.theme_requests.entry(key.to_string()).or_default();
+                *req += 1;
+                let (req_id, theme, key_owned) = (*req, chosen.to_string(), key.to_string());
+                self.toast = Some(format!("Downloading “{chosen}”…"));
+                let fut = download(chosen);
+                self.spawn_playground_task(Box::pin(async move {
+                    AsyncMsg::ThemeInstalled {
+                        key: key_owned,
+                        req_id,
+                        theme,
+                        result: fut.await.map(Some),
+                    }
+                }));
+                return;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(install) = self.app.install_theme
+                && self.document.is_file()
+            {
+                let req = self.theme_requests.entry(key.to_string()).or_default();
+                *req += 1;
+                let (req_id, path, theme, key_owned) = (*req, self.document.path(), chosen.to_string(), key.to_string());
+                let (tx, waker) = (self.tx_async.clone(), self.waker.clone());
+                self.toast = Some(format!("Downloading theme “{chosen}”…"));
+                std::thread::spawn(move || {
+                    let result = install(&path, &theme).map(|()| None);
+                    let _ = tx.send(AsyncMsg::ThemeInstalled { key: key_owned, req_id, theme, result });
+                    if let Some(w) = waker {
+                        w();
+                    }
+                });
+                return;
+            }
         }
         self.set_and_sync(key, Value::String(chosen.to_string()));
     }
@@ -285,7 +344,10 @@ impl SettingsWindow {
             self.editor.scope.clone(),
             self.store(),
         );
-        if let Some(waker) = self.waker.clone() {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.document.is_file()
+            && let Some(waker) = self.waker.clone()
+        {
             self.busy = true;
             let tx = self.tx_async.clone();
             std::thread::spawn(move || {
@@ -293,13 +355,13 @@ impl SettingsWindow {
                 let _ = tx.send(AsyncMsg::PreviewReady(res));
                 waker();
             });
-        } else {
-            let res = store.apply(Some(&version), &scope, &changes).map(|r| (r.before, r.after, changes));
-            self.finish_preview(res);
+            return;
         }
+        let res = store.apply(Some(&version), &scope, &changes).map(|r| (r.before, r.after, changes));
+        self.finish_preview(res);
     }
 
-    fn finish_preview(&mut self, res: Result<PreviewPayload, SaveError>) {
+    pub(crate) fn finish_preview(&mut self, res: Result<PreviewPayload, SaveError>) {
         self.busy = false;
         match res {
             Ok((before, after, _)) if after == before => {
@@ -327,7 +389,10 @@ impl SettingsWindow {
             self.editor.scope.clone(),
             self.store(),
         );
-        if let Some(waker) = self.waker.clone() {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.document.is_file()
+            && let Some(waker) = self.waker.clone()
+        {
             self.busy = true;
             let tx = self.tx_async.clone();
             std::thread::spawn(move || {
@@ -339,18 +404,19 @@ impl SettingsWindow {
                 })));
                 waker();
             });
-        } else {
-            let result = store.save(Some(&version), &scope, &changes).map(|r| (r, store.state()));
-            let doc = store.document;
-            self.finish_save(result, &saved, doc);
+            return;
         }
+        let result = store.save(Some(&version), &scope, &changes).map(|r| (r, store.state()));
+        let doc = store.document;
+        self.finish_save(result, &saved, doc, None);
     }
 
-    fn finish_save(
+    pub(crate) fn finish_save(
         &mut self,
         result: Result<SaveOutcome, SaveError>,
         saved: &[(String, Value)],
         document: Document,
+        note: Option<String>,
     ) {
         self.busy = false;
         self.document = document;
@@ -362,7 +428,7 @@ impl SettingsWindow {
                 self.recheck.clear();
                 self.banner = None;
                 self.sync_all();
-                self.toast = Some(res.note.unwrap_or_else(|| "Saved.".into()));
+                self.toast = Some(note.or(res.note).unwrap_or_else(|| "Saved.".into()));
             }
             Err(err) => self.show_save_error(err),
         }
@@ -393,44 +459,7 @@ impl SettingsWindow {
         }
     }
 
-    pub fn poll_async(&mut self, now_sec: f64) -> bool {
-        let mut changed = false;
-        let msgs: Vec<AsyncMsg> = self.rx_async.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect();
-        for msg in msgs {
-            changed = true;
-            match msg {
-                AsyncMsg::PreviewReady(res) => self.finish_preview(res),
-                AsyncMsg::SaveDone(done) => self.finish_save(done.result, &done.saved, done.document),
-                AsyncMsg::ThemesLoaded(list) => self.set_themes(list),
-                AsyncMsg::ThemeInstalled { key, req_id, theme, result } => {
-                    if self.theme_requests.get(&key).copied() == Some(req_id) {
-                        match result {
-                            Ok(()) => {
-                                if let Some(t) = self.themes.iter_mut().find(|t| t.name == theme) {
-                                    t.installed = true;
-                                }
-                                if let Some(o) = self.theme_options.iter_mut().find(|o| o.id == theme) {
-                                    o.detail.clear();
-                                }
-                                self.set_and_sync(&key, Value::String(theme.clone()));
-                                self.toast = Some(format!("Installed theme “{theme}”."));
-                            }
-                            Err(e) => self.toast = Some(e),
-                        }
-                    }
-                }
-            }
-        }
-        if self.document.is_file() && !self.busy && now_sec - self.last_poll_sec >= 3.0 {
-            self.last_poll_sec = now_sec;
-            if self.check_disk_changes() {
-                changed = true;
-            }
-        }
-        changed
-    }
-
-    fn check_disk_changes(&mut self) -> bool {
+    pub(crate) fn check_disk_changes(&mut self) -> bool {
         let state = self.store().state();
         if let Some(err) = &state.parse_error {
             self.banner = Some(Banner::ParseError(err.clone()));
@@ -455,6 +484,9 @@ impl SettingsWindow {
     }
 
     pub fn on_key(&mut self, ev: &KeyEvent, tx: &mut Tx) -> bool {
+        if matches!(ev.key, Key::Escape) && self.color_picker.take().is_some() {
+            return true;
+        }
         if ev.is_command('s')
             || (ev.mods.ctrl && matches!(&ev.key, Key::Text(t) if t.eq_ignore_ascii_case("s")))
         {
@@ -743,17 +775,21 @@ impl SettingsWindow {
     }
 }
 
-fn decode_logo(bytes: &'static [u8]) -> Option<Image> {
+fn decode_logo(bytes: &'static [u8], waker: Option<Waker>) -> Option<Image> {
     if bytes.is_empty() {
         return None;
     }
-    let cache = ImageCache::new(Arc::new(|| {}));
+    #[cfg(target_arch = "wasm32")]
+    let cache = ImageCache::new(waker?);
+    #[cfg(not(target_arch = "wasm32"))]
+    let cache = ImageCache::new(waker.unwrap_or_else(|| Arc::new(|| {})));
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
     let img = if head.trim_start().starts_with('<') && head.contains("<svg") {
         cache.svg(bytes, 32.0, 2.0)
     } else {
         cache.load(bytes)
     };
+    #[cfg(not(target_arch = "wasm32"))]
     let _ = img.wait();
     Some(img)
 }

@@ -1,14 +1,15 @@
 // Builds the browser playground (gpui/apps/settings-web) into a static folder for GitHub Pages:
-// index.html, settings_web.js (wasm-bindgen's glue) and settings_web_bg.wasm.
+// index.html, settings_web.js (wasm-bindgen's glue) and settings_web_bg.wasm. --rune builds the
+// Rune spike's playground (rune/apps/settings-web, settings_web_rune.*) instead.
 //
-//   node tools/web/build.ts [--dev] [--out <dir>]
-//       → gpui/target/web (or <dir>); serve it with any static server, e.g.
+//   node tools/web/build.ts [--rune] [--dev] [--out <dir>]
+//       → gpui/target/web or rune/target/web (or <dir>); serve it with any static server, e.g.
 //         `python3 -m http.server -d gpui/target/web` or `npx serve gpui/target/web`
 //
-// Uses the `web` profile (size-optimised release, see gpui/Cargo.toml); --dev builds the debug
-// profile, which is much faster to build and much bigger. Requires the wasm32-unknown-unknown
-// target (`rustup target add wasm32-unknown-unknown`) and wasm-bindgen-cli at the same version as
-// the `wasm-bindgen` crate in gpui/Cargo.lock (`cargo install wasm-bindgen-cli --version <it>`).
+// Uses the `web` profile (size-optimised release, see the workspace's Cargo.toml); --dev builds
+// the debug profile, which is much faster to build and much bigger. Requires the
+// wasm32-unknown-unknown target (`rustup target add wasm32-unknown-unknown`) and wasm-bindgen-cli
+// at the same version as the `wasm-bindgen` crate in the workspace's Cargo.lock (`cargo install wasm-bindgen-cli --version <it>`).
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -17,8 +18,11 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 const editor = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const workspace = join(editor, "gpui");
 const args = process.argv.slice(2);
+const rune = args.includes("--rune");
+const workspace = join(editor, rune ? "rune" : "gpui");
+const pkg = rune ? "settings-web-rune" : "settings-web";
+const stem = pkg.replaceAll("-", "_");
 const dev = args.includes("--dev");
 const outAt = args.indexOf("--out");
 const out = outAt >= 0 ? resolve(args[outAt + 1]) : join(workspace, "target", "web");
@@ -41,8 +45,8 @@ if (installed !== wanted) {
 }
 
 const profile = dev ? "dev" : "web";
-run("cargo", ["build", "--locked", "-p", "settings-web", "--target", "wasm32-unknown-unknown", "--profile", profile]);
-const wasm = join(workspace, "target", "wasm32-unknown-unknown", dev ? "debug" : "web", "settings_web.wasm");
+run("cargo", ["build", "--locked", "-p", pkg, "--target", "wasm32-unknown-unknown", "--profile", profile]);
+const wasm = join(workspace, "target", "wasm32-unknown-unknown", dev ? "debug" : "web", `${stem}.wasm`);
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
@@ -50,6 +54,6 @@ mkdirSync(out, { recursive: true });
 run("wasm-bindgen", ["--target", "web", "--no-typescript", ...(dev ? [] : ["--remove-name-section", "--remove-producers-section"]), "--out-dir", out, wasm]);
 copyFileSync(join(workspace, "apps", "settings-web", "static", "index.html"), join(out, "index.html"));
 
-const bg = join(out, "settings_web_bg.wasm");
+const bg = join(out, `${stem}_bg.wasm`);
 const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
-console.log(`${out}\n  settings_web_bg.wasm: ${mb(statSync(bg).size)} raw, ${mb(gzipSync(readFileSync(bg), { level: 9 }).length)} gzipped`);
+console.log(`${out}\n  ${stem}_bg.wasm: ${mb(statSync(bg).size)} raw, ${mb(gzipSync(readFileSync(bg), { level: 9 }).length)} gzipped`);
