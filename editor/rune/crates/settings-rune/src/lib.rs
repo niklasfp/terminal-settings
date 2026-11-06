@@ -9,6 +9,7 @@ pub mod icons;
 pub mod model;
 pub mod playground;
 pub mod state;
+pub mod theme_chooser;
 pub mod view;
 
 use playground::Playground;
@@ -153,6 +154,7 @@ pub fn run(app: AppDefinition, brand: Brand) {
             ("scope", |s| s.open_select = Some("header:scope".into())),
             ("picker", |s| open_picker(s, 0)),
             ("picker-sliders", |s| open_picker(s, 1)),
+            ("themes", open_themes),
             ("window", |s| {
                 if s.editor.schema.groups.iter().any(|g| g.id == "window") {
                     s.active_group = "window".into();
@@ -199,4 +201,14 @@ fn open_picker(s: &mut SettingsWindow, tab: usize) {
     if let Some(p) = &mut s.color_picker {
         p.tab = tab;
     }
+}
+
+/// The `themes` scene: the theme setting's list open on its page.
+fn open_themes(s: &mut SettingsWindow) {
+    let Some(setting) = s.editor.schema.settings.iter().find(|x| x.ty == settings_core::SettingType::Theme) else { return };
+    let (key, group) = (setting.key.clone(), setting.group.clone());
+    s.active_group = group;
+    let combo = s.combos.entry(key).or_default();
+    combo.open = true;
+    combo.search.focused = true;
 }

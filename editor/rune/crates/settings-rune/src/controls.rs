@@ -523,39 +523,14 @@ impl SettingsWindow {
         layer: &mut Vec<El>,
     ) -> El {
         let cur = v.as_str().filter(|t| !t.is_empty());
-        let empty_combo = ComboboxState::default();
-        let state = self.combos.get(&s.key).unwrap_or(&empty_combo);
-        let (k_acc, k_choose, k_clear) = (s.key.clone(), s.key.clone(), s.key.clone());
+        let k_clear = s.key.clone();
         let mut r = row().gap(8.0).center_y();
         if let Some(name) = cur
             && let Some(info) = self.themes.iter().find(|t| t.name == name)
         {
-            let mut dots = row().gap(2.0).center_y();
-            for hex_str in info.ansi.iter().take(6).flatten() {
-                if let Some(c) = parse_hex_color(hex_str) {
-                    dots = dots.child(el().size(8.0, 14.0).radius(2.0).fill(c).a11y_hidden());
-                }
-            }
-            r = r.child(dots);
+            r = r.child(crate::theme_chooser::preview(info, k).key(format!("{}:theme-preview", s.key)));
         }
-        r = r.child(
-            Combobox::new(
-                format!("combo:{}", s.key),
-                state,
-                &self.theme_options,
-                move |app: &mut SettingsWindow| app.combos.entry(k_acc.clone()).or_default(),
-            )
-            .label(&s.label)
-            .placeholder("No theme")
-            .search_placeholder("Search themes…")
-            .current(cur)
-            .width(260.0)
-            .disabled(disabled)
-            .on_choose(move |app: &mut SettingsWindow, chosen: &str, _| {
-                app.choose_theme(&k_choose, chosen);
-            })
-            .build(k, layer),
-        );
+        r = r.child(self.render_theme_chooser(s, cur, disabled, k, layer));
         if cur.is_some() && s.nullable && !disabled {
             r = r.child(
                 IconButton::new(&glyphs::CLOSE)
