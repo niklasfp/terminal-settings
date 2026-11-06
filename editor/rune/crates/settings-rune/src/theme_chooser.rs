@@ -15,7 +15,8 @@ use settings_core::{Setting, ThemeInfo};
 
 const ROW_H: f32 = 34.0;
 const MAX_H: f32 = 320.0;
-const WIDTH: f32 = 340.0;
+/// Rune Kit's Popover caps its content at 320 pt; anything wider spills past its edge.
+const WIDTH: f32 = 320.0;
 
 /// Case-insensitive subsequence match; contiguous runs and word starts score higher (as
 /// `Combobox`'s own filter does).
@@ -72,6 +73,17 @@ pub fn preview(t: &ThemeInfo, k: &Kit) -> El {
 }
 
 impl SettingsWindow {
+    fn toggle_theme_chooser(&mut self, key: &str, current: Option<&str>, tx: &mut rune::Tx) {
+        let c = self.combos.entry(key.to_string()).or_default();
+        c.open = !c.open;
+        c.search.clear();
+        c.search.focused = c.open;
+        c.active = current.map(str::to_string);
+        if c.open && let Some(name) = current {
+            tx.scroll_into_view(format!("{key}-theme-{name}"));
+        }
+    }
+
     pub(crate) fn render_theme_chooser(&self, s: &'static Setting, cur: Option<&str>, disabled: bool, k: &Kit, layer: &mut Vec<El>) -> El {
         let key = s.key.clone();
         let popover_key = format!("combo:{key}");
@@ -87,16 +99,17 @@ impl SettingsWindow {
             .trigger(k);
         if !disabled {
             let (key, current) = (key.clone(), cur.map(str::to_string));
-            trigger = trigger.on_press_tx(move |app: &mut SettingsWindow, tx| {
-                let c = app.combos.entry(key.clone()).or_default();
-                c.open = !c.open;
-                c.search.clear();
-                c.search.focused = c.open;
-                c.active = current.clone();
-                if c.open && let Some(name) = &current {
-                    tx.scroll_into_view(format!("{key}-theme-{name}"));
-                }
-            });
+            let (k_enter, current_enter) = (key.clone(), current.clone());
+            trigger = trigger
+                .on_press_tx(move |app: &mut SettingsWindow, tx| app.toggle_theme_chooser(&key, current.as_deref(), tx))
+                .on_key(move |app: &mut SettingsWindow, ev, tx| {
+                    // Enter opens it too (see `controls::enter_opens`).
+                    if ev.key != Key::Enter || tx.key_repeat() {
+                        return ev.key == Key::Enter;
+                    }
+                    app.toggle_theme_chooser(&k_enter, current_enter.as_deref(), tx);
+                    true
+                });
         }
         let close_key = key.clone();
         let popover = Popover::new(&popover_key)
@@ -166,48 +179,23 @@ impl SettingsWindow {
             .build(k)
             .key("search");
 
-        let mut rows = col().key("rows").w_full().growth(GrowthSpec::default()).virtualize(ROW_H).reveal_selected(true);
-        for (n, &i) in matches.iter().enumerate() {
-            let t = &self.themes[i];
-            let is_active = active == Some(i);
-            let is_current = cur == Some(t.name.as_str());
-            let (k_hover, k_pick, name) = (key.clone(), key.clone(), t.name.clone());
-            let hover_name = name.clone();
-            let mut item = row()
-                .key(format!("{key}-theme-{}", t.name))
-                .role("option")
-                .label(t.name.clone())
-                .position_in_set(n + 1, matches.len())
-                .focus_selected(is_active)
-                .w_full()
-                .h(ROW_H)
-                .px(8.0)
-                .gap(10.0)
-                .center_y()
-                .radius(4.0)
-                .fill(if is_active { k.c.hover } else { Color::TRANSPARENT })
-                .child(preview(t, k))
-                .child(text(t.name.clone()).font(k.ty.ui_compact).color(if is_current { k.c.text_strong } else { k.c.text_base }).grow(1.0).shrink().truncate().a11y_hidden());
-            if !t.installed {
-                item = item.child(
-                    el().key("download")
-                        .px(6.0)
-                        .py(1.0)
-                        .radius(4.0)
-                        .fill(k.c.layer_03)
-                        .child(text("Download").font(k.ty.small).color(k.c.text_muted))
-                        .a11y_hidden(),
-                );
-            }
-            item = item
-                .on_hover(move |app: &mut SettingsWindow| {
-                    if let Some(c) = app.combos.get_mut(&k_hover) {
-                        c.active = Some(hover_name.clone());
-                    }
-                })
-                .on_press(move |app: &mut SettingsWindow| app.choose_theme(&k_pick, &name));
-            rows = rows.child(item);
-        }
+        // Only the rows in view are built: Ghostty ships hundreds of themes.
+        let matches = std::rc::Rc::new(matches);
+        let (row_key, row_matches) = (key.clone(), matches.clone());
+        let (build_key, build_matches, kit, current) = (key.clone(), matches.clone(), k.clone(), cur.map(str::to_string));
+        let rows = col()
+            .key("rows")
+            .w_full()
+            .growth(GrowthSpec::default())
+            .reveal_selected(true)
+            .virtual_rows(
+                matches.len(),
+                ROW_H,
+                move |app: &SettingsWindow, n| format!("{row_key}-theme-{}", app.themes[row_matches[n]].name).into(),
+                move |app: &SettingsWindow, n| {
+                    theme_row(app, &build_key, n, &build_matches, active, current.as_deref(), &kit)
+                },
+            );
         let viewport = col()
             .key("viewport")
             .role("listbox")
@@ -241,6 +229,55 @@ impl SettingsWindow {
             .child(results);
         popover.child(body).build(k, layer)
     }
+}
+
+/// Row `n` of the open list: the theme's preview, its name, and a Download tag if needed.
+fn theme_row(app: &SettingsWindow, key: &str, n: usize, matches: &[usize], active: Option<usize>, cur: Option<&str>, k: &Kit) -> El {
+    let i = matches[n];
+    let t = &app.themes[i];
+    let is_current = cur == Some(t.name.as_str());
+    let (k_hover, k_pick, name) = (key.to_string(), key.to_string(), t.name.clone());
+    let hover_name = name.clone();
+    let mut item = row()
+        .key(format!("{key}-theme-{}", t.name))
+        .role("option")
+        .label(t.name.clone())
+        .position_in_set(n + 1, matches.len())
+        .focus_selected(active == Some(i))
+        .w_full()
+        .h(ROW_H)
+        .px(8.0)
+        .gap(10.0)
+        .center_y()
+        .radius(4.0)
+        .fill(if active == Some(i) { k.c.hover } else { Color::TRANSPARENT })
+        .child(preview(t, k))
+        .child(
+            text(t.name.clone())
+                .font(k.ty.ui_compact)
+                .color(if is_current { k.c.text_strong } else { k.c.text_base })
+                .grow(1.0)
+                .shrink()
+                .truncate()
+                .a11y_hidden(),
+        );
+    if !t.installed {
+        item = item.child(
+            el().key("download")
+                .px(6.0)
+                .py(1.0)
+                .radius(4.0)
+                .fill(k.c.layer_03)
+                .child(text("Download").font(k.ty.small).color(k.c.text_muted))
+                .a11y_hidden(),
+        );
+    }
+    item.on_hover(move |app: &mut SettingsWindow| {
+        if let Some(c) = app.combos.get_mut(&k_hover) {
+            c.active = Some(hover_name.clone());
+        }
+    })
+    .on_press(move |app: &mut SettingsWindow| app.choose_theme(&k_pick, &name))
 }
 
 #[cfg(test)]

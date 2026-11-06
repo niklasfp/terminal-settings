@@ -138,7 +138,7 @@ impl SettingsWindow {
                     .gap(8.0)
                     .center_y()
                     .child(text("Applies to").font(k.ty.small).color(k.c.text_muted))
-                    .child(
+                    .child(crate::controls::enter_opens(
                         Select::new("header:scope", &labels)
                             .label("Applies to")
                             .width(148.0)
@@ -160,7 +160,13 @@ impl SettingsWindow {
                                 app.sync_all();
                             })
                             .build(k, layer),
-                    ),
+                        // Disabled while there are unsaved edits, so Enter can't open it then either.
+                        |app: &mut Self| {
+                            if app.editor.dirty_count() == 0 {
+                                app.open_select = Some("header:scope".into());
+                            }
+                        },
+                    )),
             );
         }
 

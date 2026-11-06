@@ -21,6 +21,22 @@ use settings_core::{Setting, SettingType, humanize};
 
 const MAX_FLAG_CHECKBOXES: usize = 6;
 
+/// Enter on a closed dropdown's trigger opens it. Rune presses a popup trigger on Space and the
+/// arrows only (as AppKit's popup buttons do, leaving Return to the default button), but Enter is
+/// what people reach for, and what the GPUI app answers to.
+pub(crate) fn enter_opens(trigger: El, open: impl Fn(&mut SettingsWindow) + 'static) -> El {
+    row().on_key(move |app: &mut SettingsWindow, ev: &KeyEvent, tx| {
+        if ev.key != Key::Enter || ev.mods.cmd || ev.mods.ctrl || ev.mods.alt || ev.mods.shift {
+            return false;
+        }
+        if !tx.key_repeat() {
+            open(app);
+        }
+        true
+    })
+    .child(trigger)
+}
+
 /// Display label for an enum value, e.g. `"nativetab"` → `"Native tabs"`.
 pub fn value_label(v: &str) -> String {
     let known = match v {
@@ -213,8 +229,8 @@ impl SettingsWindow {
                     let open = self.open_select.as_deref() == Some(select_id.as_str());
                     let owned_values: Vec<String> = values.to_vec();
                     let owned_labels = labels.clone();
-                    let id_toggle = select_id.clone();
-                    Select::new(&select_id, &labels)
+                    let (id_toggle, id_enter) = (select_id.clone(), select_id.clone());
+                    let select = Select::new(&select_id, &labels)
                         .label(&s.label)
                         .width(200.0)
                         .placeholder("—")
@@ -237,7 +253,8 @@ impl SettingsWindow {
                                 app.set_and_sync(&key, Value::String(raw.clone()));
                             }
                         })
-                        .build(k, layer)
+                        .build(k, layer);
+                    if disabled { select } else { enter_opens(select, move |app| app.open_select = Some(id_enter.clone())) }
                 }
             }
             SettingType::Flags => self.render_flags_control(s, &v, disabled, k, layer),
@@ -501,7 +518,7 @@ impl SettingsWindow {
                 TextInput::new(edit)
                     .label(&s.label)
                     .placeholder(placeholder(s))
-                    .width(Some(132.0))
+                    .width(Some(200.0))
                     .disabled(disabled)
                     .on_edit(move |app: &mut SettingsWindow| {
                         app.edits.entry(k_edit.clone()).or_default()
@@ -586,9 +603,9 @@ impl SettingsWindow {
             .collect();
         let empty_combo = ComboboxState::default();
         let state = self.combos.get(&s.key).unwrap_or(&empty_combo);
-        let (k_acc, k_choose) = (s.key.clone(), s.key.clone());
+        let (k_acc, k_choose, k_open) = (s.key.clone(), s.key.clone(), s.key.clone());
         let label = if on.is_empty() { "None".to_string() } else { on.join(", ") };
-        Combobox::new(format!("flags:{}", s.key), state, &options, move |app: &mut SettingsWindow| {
+        let combo = Combobox::new(format!("flags:{}", s.key), state, &options, move |app: &mut SettingsWindow| {
             app.combos.entry(k_acc.clone()).or_default()
         })
         .label(&s.label)
@@ -597,7 +614,16 @@ impl SettingsWindow {
         .width(240.0)
         .disabled(disabled)
         .on_choose(move |app: &mut SettingsWindow, chosen: &str, _| app.toggle_flag(&k_choose, chosen))
-        .build(k, layer)
+        .build(k, layer);
+        if disabled {
+            return combo;
+        }
+        enter_opens(combo, move |app| {
+            let c = app.combos.entry(k_open.clone()).or_default();
+            c.open = true;
+            c.search.clear();
+            c.search.focused = true;
+        })
     }
 
     fn render_chips_control(&self, s: &'static Setting, v: &Value, disabled: bool, k: &Kit) -> El {
