@@ -1,0 +1,13 @@
+[package]
+name = "ghostty-settings-rune"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ghostty-settings-rune"
+path = "src/main.rs"
+
+[dependencies]
+settings-rune.workspace = true
+ghostty-config.workspace = true
