@@ -68,3 +68,70 @@ fn enter_space_and_down_open_the_theme_list() {
 fn enter_opens_an_enum_dropdown() {
     assert!(tab_then(is_select, Key::Enter, |rt| rt.state.open_select.is_some()), "Enter on a Select's trigger opens it");
 }
+
+fn is_background(s: &Setting) -> bool {
+    s.key == "background"
+}
+
+fn picker_cursor(rt: &Runtime<SettingsWindow>) -> Option<usize> {
+    rt.state.color_picker.as_ref().map(|p| p.cursor)
+}
+
+#[test]
+fn the_color_picker_works_from_the_keyboard() {
+    // Tab to the background swatch: the tab count after which Enter opens its picker.
+    let tabs = (1..120)
+        .find(|&tabs| {
+            let mut rt = on_page_of(is_background);
+            for _ in 0..tabs {
+                key(&mut rt, Key::Tab);
+            }
+            key(&mut rt, Key::Enter);
+            rt.state.color_picker.as_ref().is_some_and(|p| p.key == "background")
+        })
+        .expect("Enter on the swatch opens the picker");
+    let mut rt = on_page_of(is_background);
+    for _ in 0..tabs {
+        key(&mut rt, Key::Tab);
+    }
+    key(&mut rt, Key::Enter);
+    for _ in 0..10 {
+        rt.frame(1.0 / 60.0);
+    }
+
+    // Focus is in the palette: arrows move the cursor in two dimensions, Enter picks.
+    let start = picker_cursor(&rt).unwrap();
+    key(&mut rt, Key::Right);
+    assert_eq!(picker_cursor(&rt), Some(start + 1), "Right moves the cursor");
+    key(&mut rt, Key::Down);
+    assert_eq!(picker_cursor(&rt), Some(start + 13), "Down moves a row (12 swatches)");
+    key(&mut rt, Key::Enter);
+    let bg = rt.state.editor.schema.find("background").unwrap();
+    let picked = rt.state.editor.current_value(bg);
+    assert!(picked.as_str().is_some_and(|h| h.starts_with('#')), "Enter picks the swatch, got {picked}");
+    assert!(rt.state.color_picker.is_some(), "picking keeps the picker open");
+    key(&mut rt, Key::Home);
+    assert_eq!(picker_cursor(&rt), Some(0), "Home goes to the first swatch");
+    key(&mut rt, Key::End);
+    assert_eq!(picker_cursor(&rt), Some(7 * 12 - 1), "End goes to the last");
+
+    // Tab reaches the tab switcher; Right switches to the sliders.
+    key(&mut rt, Key::Tab);
+    key(&mut rt, Key::Right);
+    assert_eq!(rt.state.color_picker.as_ref().map(|p| p.tab), Some(1), "the switcher moves to Sliders");
+    // Tab goes on to the first slider, which steps on the arrows.
+    key(&mut rt, Key::Tab);
+    let before = rt.state.color_picker.as_ref().unwrap().hsla;
+    key(&mut rt, Key::Right);
+    let after = rt.state.color_picker.as_ref().unwrap().hsla;
+    assert_ne!(before, after, "an arrow steps the focused slider");
+
+    // Escape closes it, and focus is back on the swatch: Enter opens it again.
+    key(&mut rt, Key::Escape);
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.state.color_picker.is_none(), "Escape closes the picker");
+    key(&mut rt, Key::Enter);
+    assert!(rt.state.color_picker.is_some(), "focus went back to the swatch, so Enter reopens it");
+}

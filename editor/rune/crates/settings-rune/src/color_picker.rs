@@ -4,7 +4,7 @@
 //! (`#rrggbb`, or `#rrggbbaa` when not opaque); the hex field next to the swatch edits the same value.
 
 use crate::state::SettingsWindow;
-use rune::{Color, Drag, El, Phase, col, el, row, text};
+use rune::{Color, Drag, El, Key, KeyEvent, Phase, col, el, row, text};
 use rune_kit::{Kit, Popover, SegmentedControl};
 use serde_json::Value;
 use settings_core::Setting;
@@ -118,6 +118,8 @@ pub struct ColorPickerState {
     pub key: String,
     pub tab: usize,
     pub hsla: Hsla,
+    /// The palette's keyboard cursor, as `row * COLUMNS + column`.
+    pub cursor: usize,
 }
 
 /// A slider: its channel, name, and gradient stops.
@@ -182,14 +184,20 @@ impl SettingsWindow {
             .fill(value.map_or(Color::TRANSPARENT, |_| hsla.color()))
             .border(1.0, k.c.border_strong);
         if !disabled {
-            let key = s.key.clone();
-            swatch = swatch.focusable(true).on_press(move |app: &mut SettingsWindow| {
-                if app.color_picker.as_ref().is_some_and(|p| p.key == key) {
-                    app.color_picker = None;
-                } else {
-                    app.open_color_picker(&key);
-                }
-            });
+            let (key, key_enter) = (s.key.clone(), s.key.clone());
+            swatch = swatch
+                .focusable(true)
+                .on_press(move |app: &mut SettingsWindow| app.toggle_color_picker(&key))
+                // Space presses a button; Enter opens it too, as the dropdowns do.
+                .on_key(move |app: &mut SettingsWindow, ev: &KeyEvent, tx| {
+                    if ev.key != Key::Enter {
+                        return false;
+                    }
+                    if !tx.key_repeat() {
+                        app.toggle_color_picker(&key_enter);
+                    }
+                    true
+                });
         }
         let Some(open) = open.filter(|_| !disabled) else {
             return Popover::new(format!("color:{}", s.key)).trigger(swatch).build(k, layer);
@@ -204,7 +212,7 @@ impl SettingsWindow {
             })
             .build(k)
             .key("tabs");
-        let body = if open.tab == 0 { self.palette_panel(&key, hsla, k) } else { self.slider_panel(&key, hsla, k) };
+        let body = if open.tab == 0 { self.palette_panel(&key, hsla, open.cursor, k) } else { self.slider_panel(&key, hsla, k) };
         let footer = row()
             .key("current")
             .gap(8.0)
@@ -216,36 +224,96 @@ impl SettingsWindow {
             .trigger(swatch)
             .open(true)
             .on_close(|app: &mut SettingsWindow| app.color_picker = None)
-            .child(col().key("picker").gap(12.0).w(TRACK_W).child(tabs).child(body).child(footer))
+            .child(
+                col()
+                    .key("picker")
+                    // Modal: opening moves focus into it (the panel's first control), Tab stays in
+                    // it, Escape or a press outside closes it, and focus goes back to the swatch.
+                    .modal(true, |app: &mut SettingsWindow| app.color_picker = None)
+                    .gap(12.0)
+                    .w(TRACK_W)
+                    .child(tabs)
+                    .child(body)
+                    .child(footer),
+            )
             .build(k, layer)
     }
 
-    fn palette_panel(&self, key: &str, cur: Hsla, k: &Kit) -> El {
+    /// The preset swatches as one keyboard control (a grid, as NSColorPanel's): arrows move a
+    /// cursor in two dimensions, Home and End jump to the ends, and Return or Space picks.
+    fn palette_panel(&self, key: &str, cur: Hsla, cursor: usize, k: &Kit) -> El {
         let cur_rgba = cur.to_rgba();
-        let mut grid = col().key("palette").h(PANEL_H).justify_between();
-        for (r, colors) in palette().into_iter().enumerate() {
+        let rows = palette();
+        let count = rows.len() * COLUMNS;
+        let picks: Vec<Hsla> = rows.iter().flatten().map(|&c| Hsla { a: cur.a, ..c }).collect();
+        let key_nav = key.to_string();
+        let value = picks.get(cursor).map(|c| c.hex()).unwrap_or_default();
+        let mut grid = col()
+            .key("palette")
+            .role("grid")
+            .label("Palette")
+            .h(PANEL_H)
+            .justify_between()
+            .focusable(true)
+            .tab_index(1)
+            .on_key(move |app: &mut SettingsWindow, ev: &KeyEvent, tx| {
+                if ev.mods.cmd || ev.mods.ctrl || ev.mods.alt {
+                    return false;
+                }
+                let Some(p) = app.color_picker.as_mut() else { return false };
+                let at = p.cursor.min(count - 1);
+                let next = match ev.key {
+                    Key::Left => at.saturating_sub(1),
+                    Key::Right => (at + 1).min(count - 1),
+                    Key::Up => at.checked_sub(COLUMNS).unwrap_or(at),
+                    Key::Down => if at + COLUMNS < count { at + COLUMNS } else { at },
+                    Key::Home => 0,
+                    Key::End => count - 1,
+                    Key::Enter => {
+                        if !tx.key_repeat() {
+                            app.pick_color(&key_nav, picks[at]);
+                        }
+                        return true;
+                    }
+                    Key::Text(ref t) if t == " " => {
+                        app.pick_color(&key_nav, picks[at]);
+                        return true;
+                    }
+                    _ => return false,
+                };
+                p.cursor = next;
+                true
+            });
+        for (r, colors) in rows.into_iter().enumerate() {
             let mut line = row().key(format!("row{r}")).gap(GAP);
             for (i, c) in colors.into_iter().enumerate() {
-                let hex = c.hex();
+                let index = r * COLUMNS + i;
                 let picked = c.to_rgba()[..3] == cur_rgba[..3];
                 let key = key.to_string();
                 // A picked swatch keeps the current alpha.
                 let pick = Hsla { a: cur.a, ..c };
-                line = line.child(
-                    el().key(format!("swatch{r}-{i}"))
-                        .role("button")
-                        .label(hex)
-                        .size(SWATCH, SWATCH)
-                        .radius(4.0)
-                        .fill(c.color())
-                        .border(if picked { 2.0 } else { 1.0 }, if picked { k.c.text_strong } else { k.alpha(k.c.border_strong, 0.5) })
-                        .focusable(true)
-                        .on_press(move |app: &mut SettingsWindow| app.pick_color(&key, pick)),
-                );
+                let mut swatch = el()
+                    .key(format!("swatch{r}-{i}"))
+                    .size(SWATCH, SWATCH)
+                    .radius(4.0)
+                    .fill(c.color())
+                    .border(if picked { 2.0 } else { 1.0 }, if picked { k.c.text_strong } else { k.alpha(k.c.border_strong, 0.5) })
+                    .a11y_hidden()
+                    .on_press(move |app: &mut SettingsWindow| {
+                        if let Some(p) = app.color_picker.as_mut() {
+                            p.cursor = index;
+                        }
+                        app.pick_color(&key, pick);
+                    });
+                if index == cursor {
+                    swatch = swatch.outline(2.0, 1.0, k.c.border_focus);
+                }
+                line = line.child(swatch);
             }
             grid = grid.child(line);
         }
-        grid
+        // The grid is one control, so a reader hears the swatch under the cursor as its value.
+        grid.a11y_value(value)
     }
 
     fn slider_panel(&self, key: &str, cur: Hsla, k: &Kit) -> El {
@@ -273,11 +341,22 @@ impl SettingsWindow {
         panel
     }
 
+    fn toggle_color_picker(&mut self, key: &str) {
+        if self.color_picker.as_ref().is_some_and(|p| p.key == key) {
+            self.color_picker = None;
+        } else {
+            self.open_color_picker(key);
+        }
+    }
+
     pub(crate) fn open_color_picker(&mut self, key: &str) {
         let Some(s) = self.editor.schema.find(key) else { return };
         let hsla = self.editor.current_value(s).as_str().and_then(parse_rgba).map_or(Hsla::BLACK, Hsla::from_rgba);
         let tab = self.color_picker.as_ref().map_or(0, |p| p.tab);
-        self.color_picker = Some(ColorPickerState { key: key.to_string(), tab, hsla });
+        // The cursor starts on the current color's swatch, if it is one.
+        let rgb = &hsla.to_rgba()[..3];
+        let cursor = palette().iter().flatten().position(|c| &c.to_rgba()[..3] == rgb).unwrap_or(0);
+        self.color_picker = Some(ColorPickerState { key: key.to_string(), tab, hsla, cursor });
     }
 
     /// Sets the setting to `hsla`, unless that is the value it already has: re-picking the current
@@ -299,7 +378,7 @@ fn channel_slider(key: &str, name: &str, channel: Channel, cur: Hsla, stops: Vec
     let travel = TRACK_W - KNOB;
     let frac = cur.get(channel).clamp(0.0, 1.0);
     let to_frac = move |x: f32| ((x - KNOB / 2.0) / travel).clamp(0.0, 1.0);
-    let (key_step, key_drag) = (key.to_string(), key.to_string());
+    let (key_step, key_limit, key_drag) = (key.to_string(), key.to_string(), key.to_string());
     el().key(format!("{name}-slider"))
         .role("slider")
         .label(name)
@@ -307,6 +386,11 @@ fn channel_slider(key: &str, name: &str, channel: Channel, cur: Hsla, stops: Vec
         .range_step(0.01)
         .size(TRACK_W, KNOB)
         .focusable(true)
+        // Before the tab switcher, so opening the picker focuses the first slider.
+        .tab_index(1)
+        .on_step_limit(move |app: &mut SettingsWindow, max, _| {
+            app.pick_color(&key_limit, cur.with(channel, if max { 1.0 } else { 0.0 }));
+        })
         .child(
             el().key("track")
                 .size(TRACK_W, TRACK_H)
