@@ -6,6 +6,6 @@ publish = false
 
 [dependencies]
 # Lean mode: no renderer/window deps, just config loading.
-rio-backend = { git = "https://github.com/raphamorim/rio", tag = "v0.5.29", default-features = false }
+rio-backend = { git = "https://github.com/raphamorim/rio", tag = "v0.5.31", default-features = false }
 serde_json = "1"
 toml = "1.1"
