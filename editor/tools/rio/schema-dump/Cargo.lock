@@ -73,8 +73,8 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "corcovado"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 dependencies = [
  "libc",
  "miow 0.5.0",
@@ -586,8 +586,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rio-backend"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 dependencies = [
  "base64",
  "dirs",
@@ -603,8 +603,8 @@ dependencies = [
 
 [[package]]
 name = "rio-grapheme-width"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 dependencies = [
  "phf",
  "ucd-trie",
@@ -612,8 +612,8 @@ dependencies = [
 
 [[package]]
 name = "rio-graphics"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 dependencies = [
  "parking_lot",
  "rustc-hash",
@@ -624,13 +624,13 @@ dependencies = [
 
 [[package]]
 name = "rio-unicode"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 
 [[package]]
 name = "rio-vt"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 dependencies = [
  "base64",
  "bitflags",
@@ -845,8 +845,8 @@ dependencies = [
 
 [[package]]
 name = "teletypewriter"
-version = "0.5.29"
-source = "git+https://github.com/raphamorim/rio?tag=v0.5.29#6dc89d10ead6d8662212c4bce513c4c8b247ca5e"
+version = "0.5.31"
+source = "git+https://github.com/raphamorim/rio?tag=v0.5.31#aec5eb720879fc187236846af062e1ad8d9848a2"
 dependencies = [
  "corcovado",
  "dirs",
