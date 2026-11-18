@@ -1,0 +1,52 @@
+# Spike: the two settings apps' UI on Rune (github.com/anomalyco/rune) instead of GPUI Kit.
+# A separate workspace so Rune's wgpu/winit tree and GPUI's never share a Cargo.lock. The
+# terminal-agnostic core and both config crates are reused from ../gpui as they are.
+[workspace]
+resolver = "3"
+members = [
+    "crates/settings-rune",
+    "apps/rio-settings",
+    "apps/ghostty-settings",
+    "apps/settings-web",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+settings-core = { path = "../gpui/crates/settings-core" }
+rio-config = { path = "../gpui/crates/rio-config" }
+ghostty-config = { path = "../gpui/crates/ghostty-config" }
+settings-rune = { path = "crates/settings-rune" }
+serde_json = { version = "1", features = ["preserve_order"] }
+# Rune is pre-release: pin a `dev` revision (dev is never rewritten).
+rune = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
+
+[profile.dev.package."*"]
+# Rune's own advice: dependencies without debug info keep debug builds and links fast.
+debug = false
+opt-level = 1
+
+[profile.release]
+codegen-units = 16
+incremental = true
+
+# The size-tuned build, the same as ../gpui's `dist` profile.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+incremental = false
+
+# The browser playground: a release build tuned for download size.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = "debuginfo"
+incremental = false
